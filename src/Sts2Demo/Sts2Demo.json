@@ -1,0 +1,12 @@
+{
+  "id": "Sts2Demo",
+  "name": "Friend View",
+  "author": "Anton-PC",
+  "description": "Follow your friends' co-op play with a read-only view of their cards, energy, health, powers, relics, cursor, card movements and reward choices. Install the same version on every co-op client.",
+  "version": "0.1.1",
+  "has_pck": false,
+  "has_dll": true,
+  "dependencies": [],
+  "affects_gameplay": false,
+  "min_game_version": "0.107.1"
+}

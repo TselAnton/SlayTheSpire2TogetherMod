@@ -1,0 +1,11 @@
+{
+  "id": "Sts2DemoLab",
+  "name": "Demo development lab (DO NOT DISTRIBUTE)",
+  "author": "Anton-PC",
+  "version": "0.1.0",
+  "description": "Isolated non-saving test harness. Never install in a normal game.",
+  "has_dll": true,
+  "has_pck": false,
+  "dependencies": [{"id": "Sts2Demo", "min_version": "0.1.1"}],
+  "affects_gameplay": true
+}

@@ -1,0 +1,13 @@
+<Project Sdk="Godot.NET.Sdk/4.5.1">
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework><EnableDynamicLoading>true</EnableDynamicLoading>
+    <Nullable>enable</Nullable><ImplicitUsings>enable</ImplicitUsings>
+    <GameDir Condition="'$(GameDir)' == ''">$(STS2_GAME_DIR)</GameDir>
+    <AssemblyName>Sts2DemoLab</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="sts2"><HintPath>$(GameDir)/data_sts2_windows_x86_64/sts2.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="0Harmony"><HintPath>$(GameDir)/data_sts2_windows_x86_64/0Harmony.dll</HintPath><Private>false</Private></Reference>
+    <ProjectReference Include="../../src/Sts2Demo/Sts2Demo.csproj" />
+  </ItemGroup>
+</Project>

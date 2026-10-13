@@ -1,0 +1,22 @@
+<Project Sdk="Godot.NET.Sdk/4.5.1">
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>13</LangVersion>
+    <AssemblyName>Sts2Demo</AssemblyName>
+    <Version>0.1.1</Version>
+    <GameDir Condition="'$(GameDir)' == ''">$(STS2_GAME_DIR)</GameDir>
+    <GameDataDir>$(GameDir)/data_sts2_windows_x86_64</GameDataDir>
+    <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
+  </PropertyGroup>
+  <ItemGroup>
+    <None Remove="docs/godot/**" />
+    <Reference Include="sts2"><HintPath>$(GameDataDir)/sts2.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="0Harmony"><HintPath>$(GameDataDir)/0Harmony.dll</HintPath><Private>false</Private></Reference>
+  </ItemGroup>
+  <Target Name="CheckGameReferences" BeforeTargets="ResolveReferences">
+    <Error Condition="!Exists('$(GameDataDir)/sts2.dll')" Text="Set STS2_GAME_DIR or pass -p:GameDir=... to your Slay the Spire 2 installation." />
+  </Target>
+</Project>
