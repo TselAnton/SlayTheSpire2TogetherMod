@@ -20,6 +20,6 @@ The normal profile is used only when Friend View is the sole successfully loaded
 
 ## Validation and credits
 
-Prepared release candidate. The repository's docs/RELEASE_1.3.0.md records actual tests and remaining checks, including real Steam co-op and physical Steam Deck/controller validation. Preparing these files does not upload them.
+Release 1.3.0. The repository's docs/RELEASE_1.3.0.md records actual tests and remaining checks, including real Steam co-op and physical Steam Deck/controller validation.
 
 Own code: MIT, Anton-PC; developed with OpenAI Codex. Analysis and packaging: Universal Modder and ILSpy; Harmony from the installation and Godot.NET.Sdk. Native loader reference: https://github.com/jiegec/STS2FirstMod. Game resources belong to Mega Crit and are resolved from the installation, never redistributed. No AI-generated in-game art/audio. The existing Workshop cover was generated separately with OpenAI imagegen.
