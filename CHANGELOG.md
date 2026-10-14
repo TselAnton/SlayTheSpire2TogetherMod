@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.3.1 — 2026-10-14
+
+- Replace completed reward panels with the waiting battlefield, including battle/rewards-only mode.
+- Bind native draw, discard and exhaust widgets to the watched player; restore local bindings and subscriptions on exit.
+- Preserve visual nodes and animate presentation changes locally. Card-list and dialogue hover use native neutral geometry plus the existing cursor stream, independent of the 2 Hz window snapshots.
+- Omit the decorative merchant hand in observation.
+- Hide native duplicate targeting lines without fighting their alpha tween or tinting them black.
+- Give an active observation priority on avatar click, including the shared map.
+- Add in-game dynamic regression scenarios and bump visual/reward protocols to 4; all participants must use 1.3.1.
+
 ## 1.3.0 — 2026-10-14
 
 - Observe supported native events, dialogue, shops, predictions, rest sites, treasure, relic choices and card selection screens. Unknown screens close observation.

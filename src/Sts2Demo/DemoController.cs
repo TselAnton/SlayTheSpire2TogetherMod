@@ -65,6 +65,7 @@ public partial class DemoController : Control
     private Color? _returnHandTint;
     private Node2D _arrow = null!;
     private readonly List<Sprite2D> _arrowParts = [];
+    private readonly DemoCombatPiles _piles = new();
 
     public override void _Ready()
     {
@@ -157,7 +158,7 @@ public partial class DemoController : Control
             Layout(target);
             // Game animations may attempt to reveal these again during a turn change.
             foreach (var node in _hidden.Keys) if (GodotObject.IsInstanceValid(node)) node.Visible = false;
-            foreach (var node in _ghosted.Keys) if (GodotObject.IsInstanceValid(node)) node.Modulate = Colors.Transparent;
+            foreach (var node in _ghosted.Keys) if (GodotObject.IsInstanceValid(node)) node.SelfModulate = new Color(_ghosted[node], 0);
             if (now - _lastRefresh > 150)
             {
                 RefreshCards(target, now);
@@ -220,17 +221,21 @@ public partial class DemoController : Control
         HideLocal(Ui.Hand);
         Ui.Hand.DisableControllerNavigation();
         HideLocal(Ui.EnergyCounterContainer);
-        foreach (var previous in _ghosted.Keys.OfType<NRemoteTargetingIndicator>().ToArray())
+        _piles.Observe(Ui, player);
+        foreach (var previous in _ghosted.Keys.ToArray())
         {
-            if (GodotObject.IsInstanceValid(previous)) previous.Modulate = _ghosted[previous];
+            if (GodotObject.IsInstanceValid(previous)) previous.SelfModulate = _ghosted[previous];
             _ghosted.Remove(previous);
         }
         foreach (var indicator in DemoUi.Descendants<NRemoteTargetingIndicator>(NGame.Instance!))
         {
             var owner = (Player?)HarmonyLib.AccessTools.Field(typeof(NRemoteTargetingIndicator), "_player").GetValue(indicator);
             if (owner?.NetId != id) continue;
-            if (!_ghosted.ContainsKey(indicator)) _ghosted[indicator] = indicator.Modulate;
-            indicator.Modulate = Colors.Transparent;
+            foreach (var line in DemoUi.Descendants<Line2D>(indicator))
+            {
+                if (!_ghosted.ContainsKey(line)) _ghosted[line] = line.SelfModulate;
+                line.SelfModulate = new Color(line.SelfModulate, 0);
+            }
         }
         _inventoryKey = "";
         _demo.Visible = true;
@@ -257,12 +262,13 @@ public partial class DemoController : Control
     {
         if (!_session.Active && _hidden.Count == 0 && _ghosted.Count == 0) return;
         _session.Exit();
+        _piles.Restore();
         _transition?.Kill();
         RestoreReturnAnimation();
         foreach (var (node, visible) in _hidden)
             if (GodotObject.IsInstanceValid(node)) node.Visible = visible;
         _hidden.Clear();
-        foreach (var (node, color) in _ghosted) if (GodotObject.IsInstanceValid(node)) node.Modulate = color;
+        foreach (var (node, color) in _ghosted) if (GodotObject.IsInstanceValid(node)) node.SelfModulate = color;
         _ghosted.Clear();
         bool animate = IsInsideTree() && CombatManager.Instance.IsInProgress && !_failed;
         if (animate)

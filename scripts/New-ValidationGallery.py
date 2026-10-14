@@ -12,7 +12,7 @@ parser.add_argument("--contacts", action="store_true")
 parser.add_argument("--archive", action="store_true")
 args = parser.parse_args()
 root = Path(__file__).resolve().parents[1]
-folder = root / "artifacts/validation-1.3.0"
+folder = root / "artifacts/validation-1.3.1"
 files = sorted(folder.glob("lab-*.png"))
 run = json.loads((folder / "run.json").read_text(encoding="utf-8-sig"))
 files = [p for p in files if p.stat().st_mtime >= run["started_unix"]]
@@ -30,17 +30,17 @@ dll = root / "artifacts/lab/mods/Sts2Demo/Sts2Demo.dll"
 digest = hashlib.sha256(dll.read_bytes()).hexdigest().upper()
 if digest != run["dll_sha256"]:
     raise SystemExit("Lab DLL changed since this run; refusing to label screenshots with an untested hash")
-manifest = {"version": "1.3.0", "dll_sha256": digest, "run": run,
+manifest = {"version": "1.3.1", "dll_sha256": digest, "run": run,
             "method": "Native isolated game, synthetic peers; activity source replayed as sender 2. Not Steam two-client evidence.",
             "images": [{"file": p.name, "sha256": hashlib.sha256(p.read_bytes()).hexdigest(),
                         "modified_unix": p.stat().st_mtime} for p in files]}
 (folder / "screenshots.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
-shutil.copyfile(root / "docs/RELEASE_1.3.0.md", folder / "RELEASE_1.3.0.md")
-parts = ["""<!doctype html><html lang="ru"><meta charset="utf-8"><title>Friend View 1.3.0 — проверка</title>
+shutil.copyfile(root / "docs/RELEASE_1.3.1.md", folder / "RELEASE_1.3.1.md")
+parts = ["""<!doctype html><html lang="ru"><meta charset="utf-8"><title>Friend View 1.3.1 — проверка</title>
 <style>body{background:#111820;color:#ecf1f5;font:16px system-ui;margin:24px}a{color:#8ad8ff}nav{display:flex;gap:14px;flex-wrap:wrap}.pair{display:grid;grid-template-columns:1fr 1fr;gap:12px}figure{margin:0}img{width:100%;height:auto}section{margin:36px 0}figcaption{padding:8px}code{overflow-wrap:anywhere}@media(max-width:800px){.pair{grid-template-columns:1fr}}</style>
-<h1>Friend View 1.3.0 — кадры проверки</h1>
+<h1>Friend View 1.3.1 — кадры проверки</h1>
 <p>Слева — исходное штатное окно, справа — DEMO. Кадры сохранены реальной игрой без ретуши. Это изолированный лабораторный запуск с синтетическими участниками: для проверки рендера состояние исходного окна воспроизводится от имени игрока 2. Отдельные кадры reward-owner проверяют разные награды игроков 1, 2 и 3. Галерея не доказывает работу между двумя Steam-клиентами.</p>
-<p>Фазы декоративных анимаций между кадрами различаются. Точные результаты и ограничения — в <a href="RELEASE_1.3.0.md">отчёте RELEASE_1.3.0.md</a>.</p>""",
+<p>Фазы декоративных анимаций между кадрами различаются. Точные результаты и ограничения — в <a href="RELEASE_1.3.1.md">отчёте RELEASE_1.3.1.md</a>.</p>""",
          f"<p>DLL тестовой копии: <code>{digest}</code>. <a href='screenshots.json'>Хеши и время снимков</a>.</p><nav>"]
 parts.extend(f"<a href='#{html.escape(n)}'>{html.escape(n)}</a>" for n, _, _ in pairs)
 parts.append("</nav>")
@@ -66,9 +66,20 @@ if args.contacts:
                 with Image.open(path) as im:
                     sheet.paste(im.resize((640, 360)), (col * 640, row * 388 + 28))
         sheet.save(folder / f"contact-{start // 4 + 1:02}.jpg", quality=92)
+    extras = [path for path in files if path not in used]
+    for start in range(0, len(extras), 12):
+        batch = extras[start:start + 12]
+        sheet = Image.new("RGB", (1280, ((len(batch) + 1) // 2) * 388), "#111820")
+        draw = ImageDraw.Draw(sheet)
+        for i, path in enumerate(batch):
+            col, row = i % 2, i // 2
+            draw.text((col * 640 + 8, row * 388 + 5), path.stem.removeprefix("lab-"), fill="white")
+            with Image.open(path) as im:
+                sheet.paste(im.resize((640, 360)), (col * 640, row * 388 + 28))
+        sheet.save(folder / f"extras-{start // 12 + 1:02}.jpg", quality=92)
 if args.archive:
-    with zipfile.ZipFile(root / "dist/FriendView-1.3.0-validation.zip", "w", zipfile.ZIP_DEFLATED) as archive:
-        evidence = files + [folder / name for name in ["index.html", "screenshots.json", "run.json", "lab-current.log", "RELEASE_1.3.0.md"]]
+    with zipfile.ZipFile(root / "dist/FriendView-1.3.1-validation.zip", "w", zipfile.ZIP_DEFLATED) as archive:
+        evidence = files + [folder / name for name in ["index.html", "screenshots.json", "run.json", "lab-current.log", "RELEASE_1.3.1.md"]]
         if (folder / "pre-release-checks.txt").exists():
             evidence.append(folder / "pre-release-checks.txt")
         stress_manifest = folder / "stress-run.json"

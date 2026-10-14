@@ -9,14 +9,14 @@ using System.Text.Json;
 
 namespace Sts2Demo.Networking;
 
-public enum DemoRewardKind : byte { None, Rewards, CardChoice, Activity, Map }
+public enum DemoRewardKind : byte { None, Rewards, CardChoice, Activity, Map, Waiting }
 
 public sealed record DemoRewardEntry(string Type, string Text, List<DemoVisual> Icons);
 
 public struct DemoRewardMessage : INetMessage
 {
     public const int MaxOptions = 16;
-    public const byte Protocol = 3;
+    public const byte Protocol = 4;
     public byte ProtocolVersion;
     public uint Sequence;
     public string? Screen;

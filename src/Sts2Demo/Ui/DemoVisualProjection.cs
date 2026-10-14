@@ -8,6 +8,9 @@ using MegaCrit.Sts2.Core.Nodes.CommonUi;
 using MegaCrit.Sts2.Core.Assets;
 using MegaCrit.Sts2.Core.Bindings.MegaSpine;
 using MegaCrit.Sts2.Core.Helpers;
+using MegaCrit.Sts2.Core.Nodes.Cards.Holders;
+using MegaCrit.Sts2.Core.Nodes.Events;
+using MegaCrit.Sts2.Core.Nodes.Screens.Shops;
 
 namespace Sts2Demo.Ui;
 
@@ -45,6 +48,10 @@ public partial class DemoVisualProjection : Control
         return result;
     }
     private readonly Dictionary<string, Control> _nodes = [];
+    private readonly Dictionary<string, Control> _leaves = [];
+    private readonly Dictionary<string, DemoVisual> _rendered = [];
+    private readonly Dictionary<string, float> _hoverAmounts = [];
+    public Vector2 RemoteCursor { get; set; } = new(-10000, -10000); // normalized
     private readonly Dictionary<string, Resource?> _assets = [];
     private readonly DemoVisualState _state = new();
     private Vector2 _reference = new(1920, 1080);
@@ -54,18 +61,25 @@ public partial class DemoVisualProjection : Control
             .Select(v => v.Tint[3]).DefaultIfEmpty(0).Max() : 1;
     public bool Apply(DemoVisualUpdate update, uint sequence)
     {
+        bool sameScreen = _state.Screen == update.Screen;
         if (!_state.Apply(update, sequence)) return false;
         _reference = new(update.Reference[0], update.Reference[1]);
-        if (update.Full)
+        if (update.Full && !sameScreen)
         {
             foreach (var node in _nodes.Values) { RemoveChild(node); node.QueueFree(); }
             _nodes.Clear();
+            _leaves.Clear(); _rendered.Clear(); _hoverAmounts.Clear();
         }
-        foreach (var id in update.Removed)
-            if (_nodes.Remove(id, out var old)) { RemoveChild(old); old.QueueFree(); }
+        foreach (var id in _nodes.Keys.Where(id => !_state.Items.ContainsKey(id)).ToArray())
+            RemoveVisual(id);
         foreach (var visual in update.Items)
         {
-            if (_nodes.Remove(visual.Id, out var old)) { RemoveChild(old); old.QueueFree(); }
+            if (_rendered.TryGetValue(visual.Id, out var previous) && SameContent(previous, visual))
+            {
+                _rendered[visual.Id] = visual;
+                continue; // Keep native particles, Spine tracks and text effects alive.
+            }
+            RemoveVisual(visual.Id);
             var node = CreateVisual(visual);
             if (node == null) continue;
             Control display = node;
@@ -85,6 +99,14 @@ public partial class DemoVisualProjection : Control
             node.Position = transform.Origin; node.Rotation = transform.Rotation; node.Scale = transform.Scale;
             if (display != node) node.Position -= display.Position;
             node.Modulate = new(visual.Tint[0], visual.Tint[1], visual.Tint[2], visual.Tint[3]);
+            if (visual.Hover.Length == 9 && visual.Hover[8] == 3) node.Modulate = new Color(node.Modulate, 0);
+            if (visual.CanvasMaterial.Length == 6)
+            {
+                var c = visual.CanvasMaterial;
+                node.Material = new CanvasItemMaterial { BlendMode = (CanvasItemMaterial.BlendModeEnum)c[0],
+                    LightMode = (CanvasItemMaterial.LightModeEnum)c[1], ParticlesAnimation = c[2] != 0,
+                    ParticlesAnimHFrames = c[3], ParticlesAnimVFrames = c[4], ParticlesAnimLoop = c[5] != 0 };
+            }
             if (visual.Shader != "" && DemoVisualCodec.SafeShader(visual.Shader)
                 && ResourceLoader.Exists(visual.Shader) && ResourceLoader.Load(visual.Shader) is Shader shader)
             {
@@ -148,7 +170,11 @@ public partial class DemoVisualProjection : Control
                 display = wrapper;
             }
             _nodes[visual.Id] = display;
+            _leaves[visual.Id] = node;
+            _rendered[visual.Id] = visual;
         }
+        var activeGroups = _rendered.Values.Select(v => v.HoverGroup).ToHashSet();
+        foreach (var group in _hoverAmounts.Keys.Where(k => !activeGroups.Contains(k)).ToArray()) _hoverAmounts.Remove(group);
         int drawIndex = 0;
         foreach (var visual in _state.Items.Values.OrderBy(v => v.Z).ThenBy(v => v.Id, StringComparer.Ordinal))
             if (_nodes.TryGetValue(visual.Id, out var display)) MoveChild(display, drawIndex++);
@@ -158,7 +184,64 @@ public partial class DemoVisualProjection : Control
     {
         if (GetParent() is Control parent && _reference.X > 0 && _reference.Y > 0)
             Scale = parent.Size / _reference;
+        float blend = 1 - MathF.Exp(-24 * (float)delta);
+        foreach (var group in _rendered.Values.Where(v => v.Hover.Length == 9).GroupBy(v => v.HoverGroup))
+        {
+            var h = group.First().Hover;
+            bool hovered = new Rect2(h[2], h[3], h[4], h[5]).HasPoint(RemoteCursor * _reference);
+            _hoverAmounts.TryGetValue(group.Key, out float amount);
+            _hoverAmounts[group.Key] = Mathf.Lerp(amount, hovered ? 1 : 0,
+                1 - MathF.Exp(-(hovered ? 60 : 14) * (float)delta));
+        }
+        foreach (var (id, visual) in _rendered)
+        {
+            var node = _leaves[id];
+            var transform = new Transform2D(new(visual.Transform[0], visual.Transform[1]),
+                new(visual.Transform[2], visual.Transform[3]), new(visual.Transform[4], visual.Transform[5]));
+            var tint = new Color(visual.Tint[0], visual.Tint[1], visual.Tint[2], visual.Tint[3]);
+            float hover = 0;
+            if (visual.Hover.Length == 9)
+            {
+                var h = visual.Hover;
+                hover = _hoverAmounts.GetValueOrDefault(visual.HoverGroup);
+                var scale = Vector2.One.Lerp(new(h[6], h[7]), hover);
+                var pivot = new Vector2(h[0], h[1]);
+                transform.Origin = pivot + (transform.Origin - pivot) * scale;
+                transform.X *= scale; transform.Y *= scale;
+                if (h[8] == 3) tint.A *= hover; // native option outline
+            }
+            // Wrappers retain native clipping/masks. Express the target in the leaf's parent space.
+            var relativeParent = GetGlobalTransform().AffineInverse() * node.GetParent<CanvasItem>().GetGlobalTransform();
+            transform = relativeParent.AffineInverse() * transform;
+            node.Position = node.Position.Lerp(transform.Origin, blend);
+            node.Rotation = Mathf.LerpAngle(node.Rotation, transform.Rotation, blend);
+            node.Scale = node.Scale.Lerp(transform.Scale, blend);
+            node.Size = new(visual.Size[0], visual.Size[1]);
+            node.Modulate = node.Modulate.Lerp(tint, blend);
+            if (node.Material is ShaderMaterial material)
+                foreach (var (key, values) in visual.Uniforms)
+                    if (values.Length == 1 && visual.UniformKinds.GetValueOrDefault(key) == 0)
+                    {
+                        float target = visual.Hover.Length == 9 && visual.Hover[8] is 2 or 3 && key == "v"
+                            ? Mathf.Lerp(.9f, 1.2f, hover) : values[0];
+                        material.SetShaderParameter(key, Mathf.Lerp(material.GetShaderParameter(key).AsSingle(), target, blend));
+                    }
+        }
     }
+    private void RemoveVisual(string id)
+    {
+        if (_nodes.Remove(id, out var node)) { RemoveChild(node); node.QueueFree(); }
+        _leaves.Remove(id); _rendered.Remove(id);
+    }
+    private static bool SameContent(DemoVisual a, DemoVisual b) => Same(a with
+    {
+        Transform = b.Transform, Size = b.Size, Tint = b.Tint, Z = b.Z, Hover = b.Hover,
+        // A running track advances locally; frozen poses and track switches still rebuild.
+        SpinePlayback = a.Animation == b.Animation && a.SpinePlayback.Length == 3 && a.SpinePlayback[1] > 0
+            && a.SpinePlayback.Take(2).SequenceEqual(b.SpinePlayback.Take(2)) ? b.SpinePlayback : a.SpinePlayback,
+        Uniforms = a.Uniforms.ToDictionary(p => p.Key, p => p.Value.Length == 1 && a.UniformKinds.GetValueOrDefault(p.Key) == 0
+            && b.Uniforms.TryGetValue(p.Key, out var value) && value.Length == 1 ? value : p.Value)
+    }, b);
     private T? Asset<T>(string path) where T : Resource
     {
         if (path == "" || !DemoVisualCodec.SafeAsset(path)) return null;
@@ -175,7 +258,10 @@ public partial class DemoVisualProjection : Control
         {
             if (visual.Particles.Length != 9 || Asset<Material>(visual.ParticleMaterial) is not { } material) return null;
             var p = visual.Particles;
-            var particles = new GpuParticles2D { ProcessMaterial = material, Texture = Asset<Texture2D>(visual.Asset),
+            var texture = Asset<Texture2D>(visual.Asset);
+            if (texture != null && visual.Region.Length == 4) texture = new AtlasTexture { Atlas = texture,
+                Region = new(visual.Region[0], visual.Region[1], visual.Region[2], visual.Region[3]) };
+            var particles = new GpuParticles2D { ProcessMaterial = material, Texture = texture, UseParentMaterial = true,
                 Amount = Math.Clamp((int)p[0], 1, 2048), Lifetime = Math.Clamp(p[1], .01, 60),
                 Explosiveness = Math.Clamp(p[2], 0, 1), Randomness = Math.Clamp(p[3], 0, 1), SpeedScale = Math.Clamp(p[4], 0, 4),
                 Emitting = p[5] != 0, OneShot = p[6] != 0, LocalCoords = p[7] != 0, Preprocess = Math.Min(p[8], 8) };
@@ -300,6 +386,12 @@ public partial class DemoVisualProjection : Control
         {
             if (node is not CanvasItem canvas || (requireTree ? !canvas.IsVisibleInTree() : !canvas.Visible)) continue;
             if (canvas.ClipChildren == ClipChildrenMode.Only) continue;
+            Control? hoverOwner = null;
+            for (var ancestor = node; ancestor != null && ancestor != root.GetParent(); ancestor = ancestor.GetParent())
+                if (ancestor is NGridCardHolder or NEventOptionButton)
+                { hoverOwner = (Control)ancestor; break; }
+            if (hoverOwner is NEventOptionButton { Option.IsLocked: true }) hoverOwner = null;
+            bool optionOutline = hoverOwner is NEventOptionButton && node.Name == "Outline";
             // The fog shader hides underlying item sprites without changing their
             // Visible flag. Do not put wholly hidden item identity on the network.
             bool hiddenItem = false; CrystalSphereItem? predictionItem = null;
@@ -401,7 +493,7 @@ public partial class DemoVisualProjection : Control
             }
             color *= canvas.SelfModulate;
             for (Node? parent = node; parent != null; parent = parent.GetParent()) if (parent is CanvasItem item) color *= item.Modulate;
-            if (color.A < .02f) continue;
+            if (color.A < .02f && !optionOutline) continue;
             var transform = inverse * canvas.GetGlobalTransformWithCanvas();
             if (node is Sprite2D { Centered: true } or AnimatedSprite2D { Centered: true }) transform.Origin -= transform.BasisXform(size / 2);
             string asset = texture?.ResourcePath ?? ""; float[] region = [], margin = [], patchMargins = [];
@@ -537,6 +629,41 @@ public partial class DemoVisualProjection : Control
                 Clip = clipRect is { } clip ? [clip.Position.X, clip.Position.Y, clip.Size.X, clip.Size.Y] : [],
                 AlphaMasks = alphaMasks,
                 Shader = shaderPath, Uniforms = uniforms, UniformKinds = uniformKinds, UniformTextures = uniformTextures };
+            if (materialOwner.Material is CanvasItemMaterial canvasMaterial)
+                visual = visual with { CanvasMaterial = [(int)canvasMaterial.BlendMode, (int)canvasMaterial.LightMode,
+                    canvasMaterial.ParticlesAnimation ? 1 : 0, canvasMaterial.ParticlesAnimHFrames,
+                    canvasMaterial.ParticlesAnimVFrames, canvasMaterial.ParticlesAnimLoop ? 1 : 0] };
+            if (hoverOwner != null && alphaMasks.Count == 0
+                && Math.Abs(hoverOwner.Scale.X) > .001f && Math.Abs(hoverOwner.Scale.Y) > .001f)
+            {
+                // Remove the source client's hover tween from the geometry. Only
+                // its stable layout and hit area cross the wire; the observer's
+                // existing 10 Hz cursor descriptor drives the local animation.
+                var current = inverse * hoverOwner.GetGlobalTransformWithCanvas();
+                var normal = current;
+                var small = hoverOwner is NGridCardHolder holder ? holder.SmallScale : Vector2.One;
+                var large = hoverOwner is NGridCardHolder grid
+                    ? (Vector2)AccessTools.Property(grid.GetType(), "HoverScale").GetValue(grid)! : Vector2.One * 1.01f;
+                normal.X *= small.X / hoverOwner.Scale.X; normal.Y *= small.Y / hoverOwner.Scale.Y;
+                normal.Origin += current.BasisXform(hoverOwner.PivotOffset) - normal.BasisXform(hoverOwner.PivotOffset);
+                var neutral = normal * current.AffineInverse() * transform;
+                var hitbox = hoverOwner is NGridCardHolder cardHolder ? (Control)cardHolder.Hitbox : hoverOwner;
+                var hitTransform = normal * current.AffineInverse() * inverse * hitbox.GetGlobalTransformWithCanvas();
+                var rect = hitTransform * new Rect2(Vector2.Zero, hitbox.Size);
+                var pivot = normal * hoverOwner.PivotOffset;
+                if (optionOutline)
+                {
+                    var glow = StsColors.blueGlow;
+                    float opacity = 1;
+                    for (Node? p = hoverOwner; p != null; p = p.GetParent()) if (p is CanvasItem item) opacity *= item.Modulate.A;
+                    visual = visual with { Tint = [glow.R, glow.G, glow.B, opacity] };
+                }
+                if (hoverOwner is NEventOptionButton && visual.Uniforms.ContainsKey("v")) visual.Uniforms["v"] = [.9f];
+                visual = visual with { HoverGroup = hoverOwner.GetPath().ToString(),
+                    Hover = [pivot.X, pivot.Y, rect.Position.X, rect.Position.Y, rect.Size.X, rect.Size.Y,
+                        large.X / small.X, large.Y / small.Y, optionOutline ? 3 : hoverOwner is NEventOptionButton ? 2 : 1],
+                    Transform = [neutral.X.X, neutral.X.Y, neutral.Y.X, neutral.Y.Y, Q(neutral.Origin.X), Q(neutral.Origin.Y)] };
+            }
             if (predictionItem != null && cells.Any(c => c.Item == predictionItem && c.IsHidden))
             {
                 // Partial rewards may span several cells. Clip every copied visual
@@ -557,6 +684,9 @@ public partial class DemoVisualProjection : Control
     }
     private static IEnumerable<Node> DrawOrder(Node node)
     {
+        // The merchant hand is decorative, cursor-driven and has no gameplay state.
+        // Do not replay its sampled motion; the watched cursor still identifies the item.
+        if (node is NMerchantHand) yield break;
         var children = node.GetChildren();
         // Godot renders behind-parent children first (e.g. the dark relic outline).
         // Plain tree traversal incorrectly paints that outline over its icon.
@@ -593,6 +723,8 @@ public partial class DemoVisualProjection : Control
         return result;
     }
     public static bool Same(DemoVisual a, DemoVisual b) => a.Kind == b.Kind && a.Asset == b.Asset && a.Animation == b.Animation && a.Text == b.Text
+        && a.HoverGroup == b.HoverGroup && a.Hover.SequenceEqual(b.Hover)
+        && a.CanvasMaterial.SequenceEqual(b.CanvasMaterial)
         && a.SpinePlayback.SequenceEqual(b.SpinePlayback)
         && a.ParticleMaterial == b.ParticleMaterial && a.Particles.SequenceEqual(b.Particles)
         && a.AncientBanner.SequenceEqual(b.AncientBanner)

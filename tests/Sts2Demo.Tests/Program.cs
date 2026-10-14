@@ -221,7 +221,7 @@ typedScreen.Delta = true;
 Check(typedScreen.Mode == MegaCrit.Sts2.Core.Multiplayer.Transport.NetTransferMode.Unreliable, "Cursor deltas never queue behind state");
 var resync = Roundtrip(new DemoPresenceMessage { RequestSnapshot = true });
 Check(resync.RequestSnapshot, "Observer can request snapshot after switch or desynchronization");
-Console.WriteLine($"PASS: {assertions} total 1.3.0 assertions.");
+Console.WriteLine($"PASS: {assertions} total 1.3.1 assertions.");
 foreach (byte targetKind in new byte[] { 0, 1, 2 })
 {
     var aim = new DemoTargetingState { Visible = true, From = new(.3f, .1f), To = new(.8f, .4f), Offset = new(.01f, -.02f),
@@ -242,7 +242,7 @@ var iconA = new DemoRewardMessage { Cards = [], Labels = [], Entries = [new("Gol
 var iconB = iconA;
 iconB.Entries = [new("Gold", "10", [new() { Id = "icon", Tint = [.2f, .2f, .2f, 1] }])];
 Check(iconA.ContentKey() != iconB.ContentKey(), "Changed reward icon state invalidates the render cache");
-Console.WriteLine($"PASS: {assertions} complete 1.3.0 protocol assertions.");
+Console.WriteLine($"PASS: {assertions} complete 1.3.1 protocol assertions.");
 var effects = metadata with { Items = [metadata.Items[0] with { Kind = 7,
     ParticleMaterial = "res://materials/fog.tres", Particles = [24, 8, 0, 1, 1, 1, 0, 1, 8],
     AncientBanner = [1, 2, 3], SpinePlayback = [0, 0, 1.5f], LineSeparation = -8, ParagraphSeparation = 12 }] };
@@ -255,15 +255,27 @@ Check(decodedEffects.Particles.SequenceEqual(effects.Items[0].Particles)
 Check(!DemoVisualCodec.Valid(effects with { Items = [effects.Items[0] with { Particles = [1] }] }), "Incomplete particle state rejected");
 Check(!DemoVisualCodec.Valid(effects with { Items = [effects.Items[0] with { Particles = [9000, 8, 0, 1, 1, 1, 0, 1, 8] }] }), "Particle budget bounded");
 Check(!DemoVisualCodec.Valid(effects with { Items = [effects.Items[0] with { AncientBanner = [float.NaN, 0, 0] }] }), "Nonfinite native text effect rejected");
-Console.WriteLine($"PASS: {assertions} complete 1.3.0 assertions including native effects.");
+Console.WriteLine($"PASS: {assertions} complete 1.3.1 assertions including native effects.");
 var shadowed = metadata with { Items = [metadata.Items[0] with { Shadow = [2, -3, 4], ShadowColor = [0, 0, 0, .75f] }] };
 var decodedShadow = DemoVisualCodec.Decode(DemoVisualCodec.Encode(shadowed)).Items[0];
 Check(decodedShadow.Shadow.SequenceEqual(shadowed.Items[0].Shadow) && decodedShadow.ShadowColor[3] == .75f, "Native text shadow roundtrip");
 Check(!DemoVisualCodec.Valid(shadowed with { Items = [shadowed.Items[0] with { Shadow = [2, 9999, 0] }] }), "Oversized text shadow rejected");
 Check(!DemoVisualCodec.Valid(shadowed with { Items = [shadowed.Items[0] with { ShadowColor = [0, 0, 0, float.NaN] }] }), "Nonfinite shadow rejected");
-Console.WriteLine($"PASS: {assertions} final 1.3.0 assertions.");
+Console.WriteLine($"PASS: {assertions} final 1.3.1 assertions.");
 var masked = metadata with { Items = [metadata.Items[0] with { AlphaMasks = [new() { Asset = "res://images/ui/noise_mask_for_lines.tres" }] }] };
 Check(DemoVisualCodec.Decode(DemoVisualCodec.Encode(masked)).Items[0].AlphaMasks[0].Asset == masked.Items[0].AlphaMasks[0].Asset, "Native alpha mask roundtrip");
 Check(!DemoVisualCodec.Valid(masked with { Items = [masked.Items[0] with { AlphaMasks = [new() { Asset = "user://secret.tres" }] }] }), "Private alpha mask path rejected");
 Check(!DemoVisualCodec.Valid(masked with { Items = [masked.Items[0] with { AlphaMasks = Enumerable.Repeat(masked.Items[0].AlphaMasks[0], 5).ToList() }] }), "Alpha mask nesting bounded");
-Console.WriteLine($"PASS: {assertions} final 1.3.0 assertions with alpha masks.");
+Console.WriteLine($"PASS: {assertions} final 1.3.1 assertions with alpha masks.");
+var hoverMetadata = metadata with { Items = [metadata.Items[0] with { HoverGroup = "cards/one", Hover = [100, 200, 50, 100, 100, 200, 1.25f, 1.25f, 1] }] };
+Check(DemoVisualCodec.Decode(DemoVisualCodec.Encode(hoverMetadata)).Items[0].Hover.SequenceEqual(hoverMetadata.Items[0].Hover), "Local hover geometry roundtrip");
+Check(!DemoVisualCodec.Valid(hoverMetadata with { Items = [hoverMetadata.Items[0] with { Hover = [1] }] }), "Partial hover geometry rejected");
+Check(!DemoVisualCodec.Valid(hoverMetadata with { Items = [hoverMetadata.Items[0] with { Hover = [0, 0, 0, 0, 10, 10, 1000, 1, 1] }] }), "Hover scale bounded");
+Check(!DemoVisualCodec.Valid(hoverMetadata with { Items = [hoverMetadata.Items[0] with { Hover = [0, 0, 0, 0, 10, 10, 1, 1, 99] }] }), "Unknown hover effect rejected");
+var waiting = Roundtrip(new DemoRewardMessage { ProtocolVersion = DemoRewardMessage.Protocol, Kind = DemoRewardKind.Waiting, Screen = "NRewardsScreen", Cards = [], Labels = [] });
+Check(waiting.Kind == DemoRewardKind.Waiting && waiting.Screen == "NRewardsScreen", "Completed rewards descriptor roundtrip");
+Console.WriteLine($"PASS: {assertions} final 1.3.1 assertions including local hover and reward completion.");
+var additive = metadata with { Items = [metadata.Items[0] with { CanvasMaterial = [1, 0, 1, 8, 8, 1] }] };
+Check(DemoVisualCodec.Decode(DemoVisualCodec.Encode(additive)).Items[0].CanvasMaterial.SequenceEqual(additive.Items[0].CanvasMaterial), "Native additive/flipbook material roundtrip");
+Check(!DemoVisualCodec.Valid(additive with { Items = [additive.Items[0] with { CanvasMaterial = [99, 0, 1, 8, 8, 1] }] }), "Unknown canvas blend mode rejected");
+Console.WriteLine($"PASS: {assertions} final 1.3.1 protocol assertions.");

@@ -166,6 +166,7 @@ public partial class LabOracle : Node
     private async Task QuickAudit()
     {
         await ToSignal(GetTree().CreateTimer(2), SceneTreeTimer.SignalName.Timeout);
+        await AuditPatchCombat();
         await AuditPotionsAndRestore();
         await AuditCombatActivity();
         await FinishForRewards();
@@ -461,6 +462,7 @@ public partial class LabOracle : Node
 
     private async Task TestControllerCombat()
     {
+        await AuditPatchCombat();
         await AuditPotionsAndRestore();
         await AuditCombatActivity();
         _before = Fingerprint();
@@ -680,8 +682,9 @@ public partial class LabOracle : Node
     }
     private async Task Capture(string name)
     {
+        if (CommandLineHelper.GetValue("demo-stress") == "on") return; // Preserve the full-run visual evidence.
         await ToSignal(GetTree().CreateTimer(.5), SceneTreeTimer.SignalName.Timeout);
-        string directory = Path.Combine(Path.GetDirectoryName(OS.GetExecutablePath())!, "..", "validation-1.3.0");
+        string directory = Path.Combine(Path.GetDirectoryName(OS.GetExecutablePath())!, "..", "validation-1.3.1");
         Directory.CreateDirectory(directory);
         string path = Path.Combine(directory, $"lab-{name}.png");
         GetViewport().GetTexture().GetImage().SavePng(path);
@@ -718,6 +721,7 @@ public partial class LabOracle : Node
             var published = await CapturePublishedFrame();
             _nativeRewards = published.Data; _rewardOrigin = published.Origin; _rewardSize = published.Size;
             await Capture("reward-list-source");
+            await AuditCompletedRewards();
             foreach (var model in ModelDb.AllCards.Where(c => c.Pool == Players[1].Character.CardPool).Take(3))
             {
                 var detached = model.ToMutable(); detached.Owner = Players[1];
@@ -876,7 +880,7 @@ public partial class LabOracle : Node
             if (choice != null) NOverlayStack.Instance!.Remove(choice);
             await RunManager.Instance.EnterRoomDebug(RoomType.Event, model: ModelDb.Event<MegaCrit.Sts2.Core.Models.Events.Neow>(), showTransition: false);
             await AuditActivity("ancient-event");
-            Log.Info("[DemoLab] 1.3.0 LAB FINISHED.");
+            Log.Info("[DemoLab] 1.3.1 LAB FINISHED.");
         }
         catch (Exception e) { Log.Error("[DemoLab] ACTIVITIES FAILED: " + e); }
     }
@@ -889,7 +893,7 @@ public partial class LabOracle : Node
             Location = RunManager.Instance.DebugOnlyGetState()!.RunLocation, Watching = true, TargetId = 1, RequestSnapshot = true }, 2);
         Log.Info($"[DemoLab] Capture requested: presence={_sequence}, screen={MegaCrit.Sts2.Core.Nodes.Screens.ScreenContext.ActiveScreenContext.Instance.GetCurrentScreen()?.GetType().Name}, force={AccessTools.Field(typeof(RewardDemoController), "_forceFullMetadata").GetValue(RewardDemoController.Current)}, viewing={RewardDemoController.IsViewing}, location={RunManager.Instance.DebugOnlyGetState()!.RunLocation}.");
         await ToSignal(GetTree().CreateTimer(.8), SceneTreeTimer.SignalName.Timeout);
-        if (MegaCrit.Sts2.Core.Nodes.Screens.ScreenContext.ActiveScreenContext.Instance.GetCurrentScreen() is MegaCrit.Sts2.Core.Nodes.Screens.NRewardsScreen)
+        if (MegaCrit.Sts2.Core.Nodes.Screens.ScreenContext.ActiveScreenContext.Instance.GetCurrentScreen() is MegaCrit.Sts2.Core.Nodes.Screens.NRewardsScreen { IsComplete: false })
         {
             var rewards = Net.PublishedRewards.LastOrDefault(m => m.Kind == DemoRewardKind.Rewards && m.Entries?.Count > 0);
             if (rewards.Entries?.Count > 0 && Net.PublishedScreens.Count == 0)

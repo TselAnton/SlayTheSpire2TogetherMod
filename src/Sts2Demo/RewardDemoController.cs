@@ -226,7 +226,7 @@ public partial class RewardDemoController : Control
             Render(frame.Message, (float)delta, frame.ContentKey);
             _targeting.Render(frame.Message.Targeting, this);
             if (frame.Message.Kind == DemoRewardKind.Map) _view.Hide();
-            bool imageView = frame.Message.Kind == DemoRewardKind.Activity;
+            bool imageView = frame.Message.Kind is DemoRewardKind.Activity or DemoRewardKind.Waiting;
             if (imageView && _lastNativeFrame == 0 && now >= _enteredAt && now - _enteredAt > 5000)
             { ExitBecause("native UI stream timed out"); return; }
             if (_cursor != null)
@@ -260,6 +260,7 @@ public partial class RewardDemoController : Control
     public void Toggle(ulong id)
     {
         if (_target == id) Exit();
+        else if (DemoController.ObservedPlayerId == id) DemoController.Current?.ExitDemo();
         else if (CanObserveActivity(id)) Enter(id);
         else if (CombatManager.Instance.IsInProgress)
         {
@@ -587,7 +588,7 @@ public partial class RewardDemoController : Control
         if (_contentKey != key)
         {
             Clear(); _contentKey = key;
-            if (frame.Kind == DemoRewardKind.Activity) _enteredAt = Time.GetTicksMsec();
+            if (frame.Kind is DemoRewardKind.Activity or DemoRewardKind.Waiting) _enteredAt = Time.GetTicksMsec();
             var target = RunManager.Instance.DebugOnlyGetState()!.GetPlayer(_target!.Value)!;
             _displayOptions = frame.Cards!.ToList();
             foreach (var serialized in frame.Cards!)
@@ -622,7 +623,7 @@ public partial class RewardDemoController : Control
                     : frame.Labels!.Select(text => new DemoRewardEntry("Reward", text, [])).ToList();
                 _rewardsWindow.Build(frame.Header ?? new LocString("gameplay_ui", "COMBAT_REWARD_HEADER_LOOT").GetFormattedText(), entries!);
             }
-            if (frame.Kind == DemoRewardKind.Activity)
+            if (frame.Kind is DemoRewardKind.Activity or DemoRewardKind.Waiting)
             {
                 _nativeImage = new DemoVisualProjection { Name = "NativeFriendScreen", MouseFilter = MouseFilterEnum.Ignore };
                 _contents.AddChild(_nativeImage);
@@ -632,6 +633,7 @@ public partial class RewardDemoController : Control
         { if (!NRun.Instance!.GlobalUi.MapScreen.IsOpen) { NRun.Instance.GlobalUi.MapScreen.Open(isOpenedFromTopBar: true); _openedMap = true; } }
         else if (frame.Kind != DemoRewardKind.Map && _openedMap)
         { NRun.Instance!.GlobalUi.MapScreen.Close(); _openedMap = false; }
+        if (_nativeImage != null) _nativeImage.RemoteCursor = frame.Cursor;
         float width = Math.Max(1, Size.X), height = Math.Max(1, Size.Y);
         float spacing = Math.Min(350, (width - 200) / Math.Max(1, _cards.Count));
         for (int i = 0; i < _cards.Count; i++)
@@ -720,6 +722,7 @@ public partial class RewardDemoController : Control
         {
             frame.Kind = !IsViewing && LocalScreenAllowed()
                 ? activeScreen is NCardRewardSelectionScreen ? DemoRewardKind.CardChoice
+                    : activeScreen is NRewardsScreen { IsComplete: true } ? DemoRewardKind.Waiting
                     : activeScreen is NRewardsScreen ? DemoRewardKind.Rewards : DemoRewardKind.Activity
                 : DemoRewardKind.None;
             string availability = $"{frame.Kind}:{activeScreen?.GetType().Name}:{frame.Location}";
@@ -731,7 +734,7 @@ public partial class RewardDemoController : Control
             frame.Cursor = ((focusedControl.GetGlobalTransformWithCanvas() * (focusedControl.Size / 2)) / GetViewport().GetVisibleRect().Size).Clamp(-1, 2);
         bool choicesOpen = !IsViewing && activeScreen is NCardRewardSelectionScreen
             && GodotObject.IsInstanceValid(_localChoiceScreen) && _localChoiceScreen!.IsInsideTree();
-        if (!IsViewing && (choicesOpen || activeScreen is NRewardsScreen && _choiceHoldUntil > Time.GetTicksMsec()))
+        if (!IsViewing && (choicesOpen || activeScreen is NRewardsScreen { IsComplete: false } && _choiceHoldUntil > Time.GetTicksMsec()))
         {
             frame.Kind = DemoRewardKind.CardChoice;
             frame.Cards = _localOptions.Take(DemoRewardMessage.MaxOptions).Select(c => c.Card.ToSerializable()).ToList();
@@ -743,7 +746,7 @@ public partial class RewardDemoController : Control
                 frame.Centers = _localOptions.Select(option =>
                 {
                     var holder = holders.FirstOrDefault(h => h.CardModel == option.Card);
-                    return holder?.CardNode != null ? holder.CardNode.GetGlobalTransformWithCanvas().Origin / GetViewport().GetVisibleRect().Size
+                    return holder?.CardNode != null ? holder.GetGlobalTransformWithCanvas().Origin / GetViewport().GetVisibleRect().Size
                         : new Vector2(.5f, .5f);
                 }).Take(DemoRewardMessage.MaxOptions).ToList();
                 // Mouse wins over the default keyboard/controller focus on card 0.
@@ -767,7 +770,7 @@ public partial class RewardDemoController : Control
             for (int i = 0; i < buttons.Count; i++)
                 if (buttons[i].HasFocus() || buttons[i].GetGlobalRect().HasPoint(GetGlobalMousePosition())) { frame.Hovered = i; break; }
         }
-        if (!IsViewing && frame.Kind != DemoRewardKind.CardChoice && _summaryHoldUntil > Time.GetTicksMsec() && _summaryClick is { } summary)
+        if (!IsViewing && activeScreen is not NRewardsScreen { IsComplete: true } && frame.Kind != DemoRewardKind.CardChoice && _summaryHoldUntil > Time.GetTicksMsec() && _summaryClick is { } summary)
         {
             frame.Kind = summary.Kind; frame.Labels = summary.Labels; frame.Cards = [];
             frame.Hovered = summary.Hovered; frame.Chosen = summary.Chosen;
@@ -778,7 +781,8 @@ public partial class RewardDemoController : Control
         else if (frame.Kind == DemoRewardKind.None)
         {
             var screen = ActiveScreenContext.Instance.GetCurrentScreen();
-            frame.Kind = screen is NRewardsScreen ? DemoRewardKind.Rewards : DemoRewardKind.Activity;
+            frame.Kind = screen is NRewardsScreen { IsComplete: true } ? DemoRewardKind.Waiting
+                : screen is NRewardsScreen ? DemoRewardKind.Rewards : DemoRewardKind.Activity;
             frame.Cards = []; frame.Labels = [];
         }
         _lastNonMapFrame = frame;
@@ -788,7 +792,7 @@ public partial class RewardDemoController : Control
             if (!_forceFullMetadata && details == _rewardDetailsKey)
             { frame.Delta = true; frame.Cards = []; frame.Labels = []; frame.Entries = []; frame.Header = ""; frame.Centers = []; }
             else { _rewardDetailsKey = details; _lastRewardDetails = Time.GetTicksMsec(); }
-            if (frame.Kind != DemoRewardKind.Activity) _forceFullMetadata = false;
+            if (frame.Kind is not DemoRewardKind.Activity and not DemoRewardKind.Waiting) _forceFullMetadata = false;
         }
         _net.SendMessage(frame);
     }
@@ -797,10 +801,11 @@ public partial class RewardDemoController : Control
     {
         if (sender == _net.NetId || !Connected(sender) || frame.ProtocolVersion != DemoRewardMessage.Protocol
             || frame.Location != RunManager.Instance.DebugOnlyGetState()?.RunLocation
-            || frame.Kind > DemoRewardKind.Map || frame.Cards == null || frame.Labels == null) return;
+            || frame.Kind > DemoRewardKind.Waiting || frame.Cards == null || frame.Labels == null) return;
         if (_frames.TryGetValue(sender, out var previous) && !DemoSession.Newer(frame.Sequence, previous.Message.Sequence)) return;
         if (frame.Kind is DemoRewardKind.Activity or DemoRewardKind.Map && (!DemoSettings.AllActivities || !DemoScreenPolicy.KnownActivity(frame.Screen)))
         { frame.Kind = DemoRewardKind.None; frame.Delta = false; }
+        if (frame.Kind == DemoRewardKind.Waiting && frame.Screen != "NRewardsScreen") return;
         if (frame.Delta)
         {
             if (previous == null || previous.Message.Kind != frame.Kind || previous.Message.Screen != frame.Screen) return;
@@ -921,9 +926,9 @@ public partial class RewardDemoController : Control
     private bool HasWatchers(ulong now) => _presence.Any(p => Connected(p.Key) && p.Value.Message.Watching
         && p.Value.Message.TargetId == _net.NetId && now - p.Value.Seen < 6500);
 
-    private bool ShouldCapture(ulong now) => DemoSettings.AllActivities && !IsViewing && !DemoController.IsViewing
+    private bool ShouldCapture(ulong now) => (DemoSettings.AllActivities || ActiveScreenContext.Instance.GetCurrentScreen() is NRewardsScreen { IsComplete: true }) && !IsViewing && !DemoController.IsViewing
         && LocalScreenAllowed() && HasWatchers(now)
-        && ActiveScreenContext.Instance.GetCurrentScreen() is not NRewardsScreen and not NCardRewardSelectionScreen and not NMapScreen and not NMapRoom;
+        && ActiveScreenContext.Instance.GetCurrentScreen() is not NRewardsScreen { IsComplete: false } and not NCardRewardSelectionScreen and not NMapScreen and not NMapRoom;
 
     private void CaptureNativeScreen()
     {
@@ -933,7 +938,9 @@ public partial class RewardDemoController : Control
             var reference = GetViewport().GetVisibleRect().Size;
             bool mapOverlay = root is NMapScreen;
             if (mapOverlay && (_lastNonMapFrame?.Kind != DemoRewardKind.Activity || _publishedVisuals.Count == 0)) return;
-            var current = mapOverlay ? _publishedVisuals : DemoVisualProjection.CaptureActivity(root).ToDictionary(v => v.Id);
+            var current = mapOverlay ? _publishedVisuals : (root is NRewardsScreen { IsComplete: true }
+                ? DemoVisualProjection.Capture(NRun.Instance!.GetNode<Node>("RoomContainer"), Transform2D.Identity)
+                : DemoVisualProjection.CaptureActivity(root)).ToDictionary(v => v.Id);
             string screen = mapOverlay ? _publishedScreen : root.GetType().Name;
             ulong now = Time.GetTicksMsec();
             bool full = _forceFullMetadata || screen != _publishedScreen || root.GetInstanceId() != _publishedRoot;
@@ -1042,6 +1049,13 @@ internal static class ObserveFromPlayerRow
 {
     static bool Prefix(NMultiplayerPlayerState __instance)
     {
+        // Exit owns the click even on a map/unsupported screen or while the entry
+        // preference changes. Never fall through to the native deck inspector.
+        if ((RewardDemoController.ObservedPlayerId ?? DemoController.ObservedPlayerId) == __instance.Player.NetId)
+        {
+            RewardDemoController.Current?.Exit(); DemoController.Current?.ExitDemo();
+            return false;
+        }
         if (DemoSettings.SeparateButton || RewardDemoController.Current is not { } controller
             || !controller.CanObserve(__instance.Player.NetId)
             || NTargetManager.Instance.LastTargetingFinishedFrame == __instance.GetTree().GetFrame()) return true;

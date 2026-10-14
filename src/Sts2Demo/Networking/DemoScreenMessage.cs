@@ -9,7 +9,7 @@ namespace Sts2Demo.Networking;
 /// <summary>Bounded compressed asset/text/layout metadata. No image bytes or GPU readback.</summary>
 public struct DemoScreenMessage : INetMessage
 {
-    public const byte Protocol = 3;
+    public const byte Protocol = 4;
     public const int MaxFrameBytes = 32 * 1024;
     public const int ChunkBytes = 4 * 1024;
     public const int MaxChunks = MaxFrameBytes / ChunkBytes;

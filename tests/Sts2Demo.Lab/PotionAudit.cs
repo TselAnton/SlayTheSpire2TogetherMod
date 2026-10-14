@@ -57,7 +57,7 @@ public partial class LabOracle
                     message.Sequence = ++_sequence; Net.Inject(message, 2);
                     await ToSignal(GetTree().CreateTimer(.1), SceneTreeTimer.SignalName.Timeout);
                 }
-                string path = Path.Combine(Path.GetDirectoryName(OS.GetExecutablePath())!, "../validation-1.3.0/lab-potion-" + name + ".png");
+                string path = Path.Combine(Path.GetDirectoryName(OS.GetExecutablePath())!, "../validation-1.3.1/lab-potion-" + name + ".png");
                 GetViewport().GetTexture().GetImage().SavePng(path);
                 var arrow = Descendants<Node2D>(controller).Single(n => n.Name == "DemoTargetingArrow");
                 if (!arrow.Visible) throw new Exception("Remote potion arrow missing: " + name);
