@@ -18,6 +18,7 @@ using MegaCrit.Sts2.Core.Nodes.Screens.Map;
 using MegaCrit.Sts2.Core.Nodes.Rewards;
 using MegaCrit.Sts2.Core.Nodes.Rooms;
 using MegaCrit.Sts2.Core.Nodes.CommonUi;
+using MegaCrit.Sts2.Core.Nodes.Combat;
 using MegaCrit.Sts2.Core.Assets;
 using MegaCrit.Sts2.Core.Localization;
 using MegaCrit.Sts2.Core.Nodes.Screens.ScreenContext;
@@ -85,6 +86,9 @@ public partial class RewardDemoController : Control
     private ulong _enteredAt;
     private Vector2 _imageOrigin;
     private Vector2 _imageSize = Vector2.One;
+    private readonly HashSet<StringName> _ownedPresses = [];
+    private Control? _returnFocus;
+    private TextureRect _exitHint = null!;
 
     public static void ContinueAfterCombat(ulong? target) => _continueTarget = target;
     public static void TrackRewards(NRewardsScreen screen, RewardsSet set) { _localRewardsScreen = screen; _localRewardsSet = set; }
@@ -150,6 +154,7 @@ public partial class RewardDemoController : Control
         _exit.ZIndex = 500;
         _exit.Pressed += Exit;
         _view.AddChild(_exit);
+        _exitHint = DemoUi.ControllerHint(_exit);
     }
 
     public override void _Process(double delta)
@@ -166,6 +171,7 @@ public partial class RewardDemoController : Control
             }
             if (CombatManager.Instance.IsInProgress) _continueTarget = null;
             if (now - _lastSend >= 100) { SendSnapshot(); RefreshEyes(now); _lastSend = now; }
+            RefreshControllerHints();
             if (now - _lastPresence > 2000 && !CombatManager.Instance.IsInProgress) { SendPresence(); _lastPresence = now; }
             if (now - _lastCapture >= 250 && !_capturePending && ShouldCapture(now))
             { _lastCapture = now; _ = CaptureNativeScreen(); }
@@ -200,7 +206,11 @@ public partial class RewardDemoController : Control
 
     public void FocusAvatarEye(ulong id)
     {
-        if (_eyes.TryGetValue(id, out var eye) && eye.Visible && !eye.Disabled) eye.GrabFocus();
+        if (NControllerManager.Instance?.IsUsingController != true) return;
+        var creature = CombatManager.Instance.IsInProgress
+            ? NCombatRoom.Instance?.CreatureNodes.FirstOrDefault(c => c.Entity.Player?.NetId == id) : null;
+        if (creature?.Hitbox.IsVisibleInTree() == true) creature.Hitbox.GrabFocus();
+        else if (_eyes.TryGetValue(id, out var eye) && eye.Visible && !eye.Disabled) eye.GrabFocus();
     }
 
     private void Toggle(ulong id)
@@ -237,6 +247,7 @@ public partial class RewardDemoController : Control
                 eye.ZIndex = 500;
                 AddChild(eye); _eyes[id] = eye;
                 eye.Pressed += () => Toggle(id);
+                DemoUi.ControllerHint(eye);
             }
             var avatar = state.GetNode<TextureRect>("%CharacterIcon");
             var inverse = GetGlobalTransformWithCanvas().AffineInverse();
@@ -261,7 +272,7 @@ public partial class RewardDemoController : Control
             eye.Visible = combat ? creature?.IsVisibleInTree() == true
                 : state.IsVisibleInTree() && !cardChoices && LocalScreenAllowed() && (available || selected);
             eye.Disabled = !Connected(id) || (!combat && !available && !selected);
-            eye.Modulate = selected ? ActiveTint : Colors.White;
+            eye.SelfModulate = selected ? ActiveTint : Colors.White; // Do not tint the native glyph above it.
             if (selected)
             {
                 _avatarTints[avatar] = avatar.SelfModulate;
@@ -273,6 +284,45 @@ public partial class RewardDemoController : Control
             eye.TooltipText = string.Join(", ", watchers.Prepend(state.Player.Character.Id.ToString()));
         }
         foreach (var (id, eye) in _eyes) if (!seen.Contains(id)) eye.Hide();
+    }
+
+    private ulong? FocusedFriend()
+    {
+        var focus = GetViewport().GuiGetFocusOwner();
+        if (focus == null || NRun.Instance == null) return null;
+        if (_exit.IsVisibleInTree() && focus == _exit) return _target;
+        bool combat = CombatManager.Instance.IsInProgress;
+        if (combat && (NCombatRoom.Instance is not { } room || !ActiveScreenContext.Instance.IsCurrent(room)
+            || NTargetManager.Instance.IsInSelection || room.Ui.Hand.InCardPlay
+            || room.Ui.Hand.IsInCardSelection)) return null;
+        if (!combat && !LocalScreenAllowed()) return null;
+        foreach (var (id, eye) in _eyes)
+        {
+            if (!eye.IsVisibleInTree() || eye.Disabled) continue;
+            if (focus == eye) return id;
+            if (combat && NCombatRoom.Instance?.CreatureNodes.Any(c => c.Entity.Player?.NetId == id && c.Hitbox == focus) == true) return id;
+            if (!combat && DemoUi.Descendants<NMultiplayerPlayerState>(NRun.Instance.GlobalUi.MultiplayerPlayerContainer)
+                .Any(s => s.Player.NetId == id && s.Hitbox == focus)) return id;
+        }
+        return null;
+    }
+
+    private void RefreshControllerHints()
+    {
+        var focused = FocusedFriend();
+        var target = DemoController.ObservedPlayerId ?? _target;
+        foreach (var (id, eye) in _eyes)
+            DemoUi.UpdateHint(eye.GetNode<TextureRect>("DemoControllerHint"),
+                target == id ? MegaInput.cancel : MegaInput.select,
+                eye.IsVisibleInTree() && !eye.Disabled && (target == id || focused == id));
+        DemoUi.UpdateHint(_exitHint, MegaInput.cancel, _target != null && _exit.IsVisibleInTree());
+        // The cloned tickbox uses the native accept binding (Y), not select (A).
+        // Native NButton also refreshes it on InputRebound / controller changes.
+        if (_upgradeTickbox?.GetNodeOrNull<TextureRect>("%ControllerIcon") is { } upgradeHint)
+        {
+            upgradeHint.Texture = NInputManager.Instance?.GetHotkeyIcon(MegaInput.accept);
+            upgradeHint.Visible = _target != null && NControllerManager.Instance?.IsUsingController == true && upgradeHint.Texture != null;
+        }
     }
 
     private void SetPlayerListForeground(bool visible)
@@ -299,6 +349,7 @@ public partial class RewardDemoController : Control
         _continueTarget = null;
         if (_target == id) return true;
         _viewTween?.Kill();
+        if (_target == null) _returnFocus = GetViewport().GuiGetFocusOwner();
         _target = id;
         _lastNativeFrame = 0;
         _enteredAt = Time.GetTicksMsec(); _screenAssembly = new();
@@ -311,7 +362,8 @@ public partial class RewardDemoController : Control
         _viewTween = CreateTween(); _viewTween.TweenProperty(_view, "modulate:a", 1f, .2);
         Render(frame.Message, 1);
         RefreshEyes(Time.GetTicksMsec());
-        if (_exit.Visible) _exit.GrabFocus(); else FocusAvatarEye(id);
+        if (NControllerManager.Instance?.IsUsingController == true)
+        { if (_exit.Visible) _exit.GrabFocus(); else FocusAvatarEye(id); }
         SendPresence();
         NGame.Instance?.RemoteCursorContainer.ForceUpdateAllCursors();
         Log.Info($"[Friend View] Enter rewards: {id}; options={frame.Message.Cards?.Count ?? 0}.");
@@ -333,6 +385,10 @@ public partial class RewardDemoController : Control
         else { _view.Hide(); Clear(); }
         SetPlayerListForeground(false);
         RefreshEyes(Time.GetTicksMsec());
+        if (_returnFocus != null && GodotObject.IsInstanceValid(_returnFocus)
+            && _returnFocus.IsVisibleInTree() && _returnFocus.FocusMode == FocusModeEnum.All
+            && NControllerManager.Instance?.IsUsingController == true) _returnFocus.GrabFocus();
+        _returnFocus = null;
         SendPresence();
         NGame.Instance?.RemoteCursorContainer.ForceUpdateAllCursors();
         Log.Info("[Friend View] Exit rewards; original reward screen untouched.");
@@ -345,36 +401,97 @@ public partial class RewardDemoController : Control
 
     public override void _Input(InputEvent input)
     {
-        if (_target == null) return;
-        if (input.IsActionPressed("ui_cancel") || input is InputEventKey { Pressed: true, Echo: false, Keycode: Key.Escape })
-        { Exit(); GetViewport().SetInputAsHandled(); }
-        else if (input.IsActionPressed(MegaInput.accept))
+        if (_failed || NRun.Instance == null) return;
+        // A release still belongs to its old press even if settings changed while held.
+        foreach (var owned in _ownedPresses.ToArray())
+            if (owned != "demo_escape" && input.IsActionReleased(owned))
+            { _ownedPresses.Remove(owned); GetViewport().SetInputAsHandled(); return; }
+        if (input is InputEventKey { Keycode: Key.Escape } escape)
         {
-            var focus = GetViewport().GuiGetFocusOwner();
-            if (focus == _upgradeTickbox && _upgradeTickbox?.IsVisibleInTree() == true)
-                AccessTools.Method(typeof(NTickbox), "OnRelease").Invoke(_upgradeTickbox, null);
-            else if (focus is TextureButton button && button.IsVisibleInTree() && !button.Disabled
-                && (button == _exit || _eyes.Values.Contains(button))) button.EmitSignal(BaseButton.SignalName.Pressed);
-            GetViewport().SetInputAsHandled();
+            if (_target != null || DemoController.IsViewing || _ownedPresses.Contains("demo_escape"))
+            {
+                if (escape.Pressed && !escape.Echo)
+                { _ownedPresses.Add("demo_escape"); CloseObservedView(); }
+                else if (!escape.Pressed) _ownedPresses.Remove("demo_escape");
+                GetViewport().SetInputAsHandled();
+            }
+            return;
         }
-        else if (input.IsActionReleased(MegaInput.accept)) GetViewport().SetInputAsHandled();
-        else if (input.IsActionPressed(MegaInput.left) || input.IsActionPressed(MegaInput.up)
-            || input.IsActionPressed(MegaInput.right) || input.IsActionPressed(MegaInput.down))
+        if (input is InputEventAction logical && MegaInput.AllInputs.Contains(logical.Action.ToString()))
         {
-            var controls = new List<Control>();
+            if (RouteAction(logical.Action, logical.Pressed, logical.Action)) GetViewport().SetInputAsHandled();
+            return;
+        }
+        // Steam Input emits controller_* actions; native Godot controllers can emit
+        // joypad events directly. Read the SAME current mapping as NInputManager.
+        // Do not swallow an unmapped raw event: the engine still needs to translate it.
+        if (input.IsEcho()
+            || !(input is InputEventJoypadButton || input is InputEventAction physical
+                && Controller.AllControllerInputs.Contains(physical.Action))) return;
+        var mapping = (Dictionary<StringName, StringName>)AccessTools.Field(typeof(NInputManager), "_controllerInputMap")
+            .GetValue(NInputManager.Instance)!;
+        // Choose ONE owner even if an unusual mapping aliases multiple actions.
+        var priority = new[] { MegaInput.cancel, MegaInput.select, MegaInput.accept, MegaInput.left,
+            MegaInput.right, MegaInput.up, MegaInput.down }.Concat(MegaInput.AllInputs.Select(s => new StringName(s))).Distinct();
+        foreach (var action in priority)
+        {
+            if (!mapping.TryGetValue(action, out var binding)) continue;
+            bool pressed = input.IsActionPressed(binding), released = input.IsActionReleased(binding);
+            if (NControllerManager.Instance?.IsUsingController != true && !(released && _ownedPresses.Contains(binding))) continue;
+            if ((pressed || released) && RouteAction(action, pressed, binding))
+            { GetViewport().SetInputAsHandled(); return; }
+        }
+    }
+
+    private bool RouteAction(StringName action, bool pressed, StringName pressKey)
+    {
+        // Own the matching release after exiting: it must not close a local screen,
+        // claim a reward or activate a newly restored underlying control.
+        if (!pressed && _ownedPresses.Remove(pressKey)) return true;
+        if (pressed && _ownedPresses.Contains(pressKey)) return true; // held button is not a second action
+        var friend = FocusedFriend();
+        var command = DemoInputPolicy.Resolve(action, DemoController.IsViewing, _target != null,
+            friend != null, _upgradeTickbox?.IsVisibleInTree() == true);
+        if (command == DemoInputAction.None) return false;
+        if (!pressed) return true;
+        _ownedPresses.Add(pressKey);
+        switch (command)
+        {
+            case DemoInputAction.Exit: CloseObservedView(); break;
+            case DemoInputAction.ToggleFriend: Toggle(friend!.Value); break;
+            case DemoInputAction.Upgrades:
+                AccessTools.Method(typeof(NTickbox), "OnRelease").Invoke(_upgradeTickbox, null); break;
+            case DemoInputAction.Navigate: NavigateDemo(action); break;
+        }
+        RefreshControllerHints();
+        return true;
+    }
+
+    private void CloseObservedView()
+    {
+        if (_target != null) Exit(); else DemoController.Current?.ExitDemo();
+    }
+
+    private void NavigateDemo(StringName direction)
+    {
+        var controls = new List<Control>();
+        if (DemoController.IsViewing && NCombatRoom.Instance is { } room)
+        {
+            controls.AddRange(room.CreatureNodes.Where(c => c.Entity.Player is { } p && p.NetId != _net.NetId
+                && _eyes.TryGetValue(p.NetId, out var eye) && eye.IsVisibleInTree() && !eye.Disabled)
+                .OrderBy(c => c.GlobalPosition.X).Select(c => c.Hitbox));
+            if (room.Ui.EndTurnButton.IsEnabled && room.Ui.EndTurnButton.IsVisibleInTree()) controls.Add(room.Ui.EndTurnButton);
+        }
+        else
+        {
             if (_upgradeTickbox?.IsVisibleInTree() == true) controls.Add(_upgradeTickbox);
             if (_exit.IsVisibleInTree()) controls.Add(_exit);
             controls.AddRange(_eyes.Values.Where(e => e.IsVisibleInTree() && !e.Disabled).OrderBy(e => e.GlobalPosition.Y));
-            if (controls.Count > 0)
-            {
-                int index = controls.IndexOf(GetViewport().GuiGetFocusOwner());
-                int step = input.IsActionPressed(MegaInput.left) || input.IsActionPressed(MegaInput.up) ? -1 : 1;
-                controls[(index + step + controls.Count) % controls.Count].GrabFocus();
-            }
-            GetViewport().SetInputAsHandled();
         }
-        else if (input is InputEventKey or InputEventJoypadButton or InputEventJoypadMotion)
-            GetViewport().SetInputAsHandled();
+        if (controls.Count == 0) return;
+        int index = controls.IndexOf(GetViewport().GuiGetFocusOwner());
+        int step = direction == MegaInput.left || direction == MegaInput.up ? -1 : 1;
+        controls[(index + step + controls.Count) % controls.Count].GrabFocus();
     }
 
     private void Render(DemoRewardMessage frame, float delta)
@@ -425,7 +542,7 @@ public partial class RewardDemoController : Control
             _labels[i].Modulate = frame.Chosen == option || frame.Hovered == option ? DemoUi.Accent : Colors.White;
         }
         _exit.Visible = frame.Kind == DemoRewardKind.CardChoice;
-        _exit.Modulate = ActiveTint;
+        _exit.SelfModulate = ActiveTint;
         float cardsRight = width / 2 + Math.Max(0, _cards.Count - 1) * spacing / 2 + 160;
         _exit.Position = new(Math.Clamp(cardsRight + 30, 0, width - _exit.Size.X - 24), height / 2 - _exit.Size.Y / 2);
         if (_upgradeRow != null) _upgradeRow.Position = new(width / 2 - _upgradeRow.Size.X / 2, height * .79f);

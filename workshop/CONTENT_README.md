@@ -14,7 +14,9 @@ You cannot play or select cards or claim rewards while observing. The native End
 - For a manual install, copy this folder into the game's `mods` folder while the game is closed.
 - Disable the mod in the game, or unsubscribe, to remove it. Do not delete or edit your saves.
 
-Version: 1.2.0. Internal mod ID and DLL name remain `Sts2Demo` for compatibility. Do not keep a second manually installed copy alongside the Workshop copy.
+Version: 1.2.1. Internal mod ID and DLL name remain `Sts2Demo` for compatibility. Do not keep a second manually installed copy alongside the Workshop copy.
+
+Controller: select a teammate's combat character or player-list row with the native navigation, then use the focused-selection action (default Xbox A) to observe. Native cancel (B) returns to your own view. Native confirm (Y) toggles all reward-card upgrade previews; in combat it still ends YOUR turn. Button hints follow the current controller type and in-game remapping. Native card targeting keeps priority; a press/release belongs to one action only.
 
 Observe full native reward windows, shops, events, crystal-sphere predictions, maps and supported out-of-combat card screens. Complex screens use read-only images of the game viewport, up to four frames per second at 1280x720, only while someone is watching. This adds network traffic (maximum 768 KiB/s per source stream before host forwarding); the desktop and personal menus are never captured. Player-list controls remain local. No duplicated Proceed/Skip control appears in the reward window.
 

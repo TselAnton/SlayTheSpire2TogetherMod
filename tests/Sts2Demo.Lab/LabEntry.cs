@@ -31,8 +31,24 @@ using MegaCrit.Sts2.Core.Multiplayer.Messages.Game.Sync;
 using MegaCrit.Sts2.Core.Multiplayer.Game.PeerInput;
 using Sts2Demo;
 using Sts2Demo.Networking;
+using MegaCrit.Sts2.Core.ControllerInput;
+using MegaCrit.Sts2.Core.ControllerInput.ControllerConfigs;
+using MegaCrit.Sts2.Core.Nodes.CommonUi;
+using MegaCrit.Sts2.Core.Nodes.Multiplayer;
 
 namespace Sts2DemoLab;
+
+// Fixture only: uses installed native glyphs without a physical controller or OS input.
+internal sealed class LabControllerStrategy(ControllerConfig config) : IControllerInputStrategy
+{
+    public ControllerConfig ControllerConfig => config;
+    public Dictionary<StringName, StringName> GetDefaultControllerInputMap => config.DefaultControllerInputMap;
+    public bool ShouldAllowControllerRebinding => true;
+    public Task Init() => Task.CompletedTask;
+    public void ProcessInput() { }
+    public Texture2D? GetHotkeyIcon(string hotkey) => config.GetButtonIcon(hotkey);
+    public string GetControllerName() => "Isolated controller fixture";
+}
 
 [ModInitializer(nameof(Initialize))]
 public static class LabEntry
@@ -121,10 +137,8 @@ public partial class LabOracle : Node
         if (_phase == 0 && now - _start > 3500)
         {
             _before = Fingerprint();
-            if (!DemoController.Current!.EnterDemo(2)) { Log.Error("[DemoLab] ENTER FAILED"); _phase = 99; return; }
-            _phase = 1;
-            Log.Info("[DemoLab] Entered demo; read-only test begins.");
-            TaskHelper.RunSafely(TestEyeHitbox(RewardDemoController.Current!.GetNode<TextureButton>("AvatarDemoEye_2"), "combat"));
+            _phase = 98;
+            TaskHelper.RunSafely(TestControllerCombat());
         }
         if ((_phase == 1 || _phase == 4) && now - _lastFrame > 66)
         {
@@ -172,13 +186,13 @@ public partial class LabOracle : Node
             var third = controller.GetNode<TextureButton>("AvatarDemoEye_3");
             third.EmitSignal(BaseButton.SignalName.Pressed);
             bool switched = DemoController.ObservedPlayerId == 3 && CountMirrors() == Players[2].PlayerCombatState!.Hand.Cards.Count;
-            bool green = third.Modulate.G > third.Modulate.R;
+            bool green = third.SelfModulate.G > third.SelfModulate.R;
             var second = controller.GetNode<TextureButton>("AvatarDemoEye_2");
             second.EmitSignal(BaseButton.SignalName.Pressed);
-            if (switched && green && third.Modulate == Colors.White && second.Modulate.G > second.Modulate.R
+            if (switched && green && third.SelfModulate == Colors.White && second.SelfModulate.G > second.SelfModulate.R
                 && DemoController.ObservedPlayerId == 2 && _before == Fingerprint())
                 Log.Info("[DemoLab] PASS: three-player combat switches friend 2 -> 3 -> 2; green tint follows target, state unchanged.");
-            else Log.Error($"[DemoLab] FAIL: three-player combat switched={switched} green={green} thirdTint={third.Modulate} secondTint={second.Modulate} target={DemoController.ObservedPlayerId} unchanged={_before == Fingerprint()}.");
+            else Log.Error($"[DemoLab] FAIL: three-player combat switched={switched} green={green} thirdTint={third.SelfModulate} secondTint={second.SelfModulate} target={DemoController.ObservedPlayerId} unchanged={_before == Fingerprint()}.");
             _switchVerified = true;
         }
         if (_phase == 2 && now - _start > 16000)
@@ -186,7 +200,7 @@ public partial class LabOracle : Node
             var controller = RewardDemoController.Current!;
             var avatarEye = controller.GetNode<TextureButton>("AvatarDemoEye_2");
             int eyes = Descendants<TextureButton>(controller).Count(b => b.Name.ToString().StartsWith("AvatarDemoEye_") && b.Visible);
-            bool green = avatarEye.Modulate.G > avatarEye.Modulate.R;
+            bool green = avatarEye.SelfModulate.G > avatarEye.SelfModulate.R;
             bool stable = avatarEye.Scale == Vector2.One && avatarEye.TextureClickMask == null;
             var creatureTop = NCombatRoom.Instance!.GetCreatureNode(Players[1].Creature)!.GetTopOfHitbox();
             bool above = avatarEye.GetGlobalRect().End.Y < creatureTop.Y;
@@ -271,12 +285,16 @@ public partial class LabOracle : Node
             tick.GrabFocus();
             RewardDemoController.Current!._Input(new InputEventAction { Action = "ui_accept", Pressed = true });
             bool controllerUpgrade = tick.IsTicked;
+            RewardDemoController.Current._Input(new InputEventAction { Action = "ui_accept", Pressed = false });
             RewardDemoController.Current._Input(new InputEventAction { Action = "ui_accept", Pressed = true });
+            RewardDemoController.Current._Input(new InputEventAction { Action = "ui_accept", Pressed = false });
             RewardDemoController.Current._Input(new InputEventAction { Action = "ui_right", Pressed = true });
+            RewardDemoController.Current._Input(new InputEventAction { Action = "ui_right", Pressed = false });
             bool exitFocus = GetViewport().GuiGetFocusOwner() is TextureButton;
             if (controllerUpgrade && !tick.IsTicked && exitFocus && Players[0].Deck.Cards.Count == _deckBefore)
                 Log.Info("[DemoLab] PASS: accept/navigation route only to demo checkbox and exit eye, with no card claim.");
             else Log.Error("[DemoLab] FAIL: demo controller checkbox/navigation.");
+            TaskHelper.RunSafely(TestControllerRewards());
         }
         if (_phase == 7 && !_skipVerified && now - _rewardStarted > 6000)
         {
@@ -334,9 +352,9 @@ public partial class LabOracle : Node
             var avatarEye = controller.GetNode<TextureButton>("AvatarDemoEye_2");
             var thirdEye = controller.GetNode<TextureButton>("AvatarDemoEye_3");
             thirdEye.EmitSignal(BaseButton.SignalName.Pressed);
-            bool switched = RewardDemoController.ObservedPlayerId == 3 && thirdEye.Modulate.G > thirdEye.Modulate.R && avatarEye.Modulate == Colors.White;
+            bool switched = RewardDemoController.ObservedPlayerId == 3 && thirdEye.SelfModulate.G > thirdEye.SelfModulate.R && avatarEye.SelfModulate == Colors.White;
             avatarEye.EmitSignal(BaseButton.SignalName.Pressed);
-            if (switched && RewardDemoController.ObservedPlayerId == 2 && avatarEye.Modulate.G > avatarEye.Modulate.R && thirdEye.Modulate == Colors.White)
+            if (switched && RewardDemoController.ObservedPlayerId == 2 && avatarEye.SelfModulate.G > avatarEye.SelfModulate.R && thirdEye.SelfModulate == Colors.White)
                 Log.Info("[DemoLab] PASS: three-player reward-list avatar eyes switch 2 -> 3 -> 2 and transfer green tint.");
             else Log.Error("[DemoLab] FAIL: reward-list target/tint switch.");
             if (!exit.Visible && avatarEye.Visible)
@@ -380,6 +398,178 @@ public partial class LabOracle : Node
         }
         catch (Exception e) { Log.Error($"[DemoLab] FAIL: {variant} hitbox test: {e}"); }
     }
+
+    private static void ControllerCheck(bool passed, string name)
+    {
+        if (passed) Log.Info($"[DemoLab] PASS: controller {name}.");
+        else Log.Error($"[DemoLab] FAIL: controller {name}.");
+    }
+
+    private async Task ControllerTap(StringName button)
+    {
+        GetViewport().PushInput(new InputEventAction { Action = button, Pressed = true }, true);
+        await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+        GetViewport().PushInput(new InputEventAction { Action = button, Pressed = false }, true);
+        await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+    }
+
+    private async Task TestControllerCombat()
+    {
+        var manager = NControllerManager.Instance!;
+        var strategyField = AccessTools.Field(typeof(NControllerManager), "_inputStrategy");
+        var originalStrategy = strategyField.GetValue(manager);
+        var modeProperty = AccessTools.Property(typeof(NControllerManager), "IsUsingController");
+        bool originalMode = manager.IsUsingController;
+        var mapping = (Dictionary<StringName, StringName>)AccessTools.Field(typeof(NInputManager), "_controllerInputMap").GetValue(NInputManager.Instance)!;
+        var originalMapping = new Dictionary<StringName, StringName>(mapping);
+        try
+        {
+            strategyField.SetValue(manager, new LabControllerStrategy(new XboxOneConfig()));
+            modeProperty.SetValue(manager, true); // No OS mouse warp or hardware takeover.
+            mapping.Clear(); foreach (var item in new XboxOneConfig().DefaultControllerInputMap) mapping.Add(item.Key, item.Value);
+            var friend = NCombatRoom.Instance!.GetCreatureNode(Players[1].Creature)!;
+            friend.Hitbox.GrabFocus();
+            await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+            await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame); // UI _Process runs after the frame signal.
+            var eye = RewardDemoController.Current!.GetNode<TextureButton>("AvatarDemoEye_2");
+            var hint = eye.GetNode<TextureRect>("DemoControllerHint");
+            ControllerCheck(hint.IsVisibleInTree() && hint.Texture == NInputManager.Instance!.GetHotkeyIcon(MegaInput.select)
+                && hint.GetGlobalRect().End.Y < eye.GetGlobalRect().Position.Y, "native A glyph ABOVE focused friend's eye");
+            if (!hint.IsVisibleInTree() || hint.GetGlobalRect().End.Y >= eye.GetGlobalRect().Position.Y)
+                Log.Info($"[DemoLab] controller glyph diagnostic: visible={hint.IsVisibleInTree()} mode={manager.IsUsingController} size={hint.Size} scale={hint.Scale} rect={hint.GetGlobalRect()} eye={eye.GetGlobalRect()}.");
+            int leaked = 0; friend.Hitbox.GuiInput += e => { if (e.IsAction(MegaInput.select)) leaked++; };
+            await ControllerTap(Controller.faceButtonSouth);
+            ControllerCheck(DemoController.ObservedPlayerId == 2 && leaked == 0, "physical A enters once; native hitbox release not triggered");
+            ControllerCheck(hint.Texture == NInputManager.Instance!.GetHotkeyIcon(MegaInput.cancel), "active eye changes to native B hint");
+            NCombatRoom.Instance.GetCreatureNode(Players[2].Creature)!.Hitbox.GrabFocus();
+            await ControllerTap(Controller.faceButtonSouth);
+            ControllerCheck(DemoController.ObservedPlayerId == 3, "physical A switches to third player");
+            int nativeConfirm = 0;
+            Action confirmPress = () => nativeConfirm++;
+            Action confirmRelease = () => nativeConfirm++;
+            NHotkeyManager.Instance!.PushHotkeyPressedBinding(MegaInput.accept, confirmPress);
+            NHotkeyManager.Instance.PushHotkeyReleasedBinding(MegaInput.accept, confirmRelease);
+            try
+            {
+                await ControllerTap(Controller.faceButtonNorth);
+                if (NGame.IsGameFocusedWindow())
+                    ControllerCheck(nativeConfirm == 2 && DemoController.ObservedPlayerId == 3,
+                        "combat Y press/release reaches native local-confirm owner, not demo");
+                else Log.Info("[DemoLab] NOT RUN: controller native-confirm hotkey delivery requires focused lab window.");
+            }
+            finally
+            {
+                NHotkeyManager.Instance.RemoveHotkeyPressedBinding(MegaInput.accept, confirmPress);
+                NHotkeyManager.Instance.RemoveHotkeyReleasedBinding(MegaInput.accept, confirmRelease);
+            }
+            await ControllerTap(Controller.faceButtonEast);
+            ControllerCheck(!DemoController.IsViewing && NCombatRoom.Instance.Ui.Hand.Visible, "physical B exits and restores native hand");
+            friend.Hitbox.GrabFocus();
+            mapping[MegaInput.select] = Controller.faceButtonWest; mapping[MegaInput.topPanel] = Controller.faceButtonSouth;
+            mapping[MegaInput.cancel] = Controller.rightBumper; mapping[MegaInput.viewExhaustPileAndTabRight] = Controller.faceButtonEast;
+            NInputManager.Instance!.EmitSignal(NInputManager.SignalName.InputRebound);
+            await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+            ControllerCheck(hint.Texture == NInputManager.Instance.GetHotkeyIcon(MegaInput.select), "rebound select updates glyph immediately");
+            await ControllerTap(Controller.faceButtonWest);
+            ControllerCheck(DemoController.ObservedPlayerId == 2, "rebound select enters with X instead of A");
+            await ControllerTap(Controller.rightBumper);
+            ControllerCheck(!DemoController.IsViewing, "rebound cancel exits with RB instead of B");
+            // Deliberate alias: one physical button maps to both cancel and select.
+            mapping[MegaInput.cancel] = Controller.faceButtonWest;
+            friend.Hitbox.GrabFocus(); await ControllerTap(Controller.faceButtonWest);
+            ControllerCheck(DemoController.IsViewing, "aliased select still enters when cancel is inactive");
+            await ControllerTap(Controller.faceButtonWest);
+            ControllerCheck(!DemoController.IsViewing, "aliased cancel owns the entire press/release; no re-entry");
+            mapping[MegaInput.cancel] = Controller.faceButtonEast;
+            friend.Hitbox.GrabFocus();
+            GetViewport().PushInput(new InputEventAction { Action = Controller.faceButtonWest, Pressed = true }, true);
+            await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+            GetViewport().PushInput(new InputEventAction { Action = Controller.faceButtonWest, Pressed = true }, true);
+            ControllerCheck(DemoController.IsViewing, "held select does not toggle twice");
+            mapping[MegaInput.select] = Controller.faceButtonSouth; mapping[MegaInput.topPanel] = Controller.leftBumper;
+            GetViewport().PushInput(new InputEventAction { Action = Controller.faceButtonWest, Pressed = false }, true);
+            ControllerCheck(GetViewport().IsInputHandled(), "release owned across remap even when old physical button is no longer mapped");
+            await ControllerTap(Controller.faceButtonEast);
+            var targetManager = NRun.Instance!.GlobalUi.TargetManager;
+            targetManager.StartTargeting(MegaCrit.Sts2.Core.Entities.Cards.TargetType.AnyAlly, Vector2.Zero,
+                MegaCrit.Sts2.Core.Nodes.Combat.TargetMode.Controller, () => false, null);
+            friend.Hitbox.GrabFocus();
+            await ControllerTap(Controller.faceButtonSouth);
+            ControllerCheck(!DemoController.IsViewing, "native ally targeting keeps A; no simultaneous demo entry");
+            targetManager.CancelTargeting();
+            ControllerCheck(_before == Fingerprint(), "combat input never changes cards, energy or teammate state");
+            await Capture("controller-combat");
+        }
+        catch (Exception e) { Log.Error($"[DemoLab] FAIL: controller combat fixture: {e}"); }
+        finally
+        {
+            mapping.Clear(); foreach (var item in originalMapping) mapping.Add(item.Key, item.Value);
+            strategyField.SetValue(manager, originalStrategy); modeProperty.SetValue(manager, originalMode);
+            NInputManager.Instance!.EmitSignal(NInputManager.SignalName.InputRebound);
+            DemoController.Current!.EnterDemo(2);
+            _phase = 1; _start = Time.GetTicksMsec() - 3500;
+            _ = TaskHelper.RunSafely(TestEyeHitbox(RewardDemoController.Current!.GetNode<TextureButton>("AvatarDemoEye_2"), "combat"));
+        }
+    }
+
+    private async Task TestControllerRewards()
+    {
+        var manager = NControllerManager.Instance!;
+        var strategyField = AccessTools.Field(typeof(NControllerManager), "_inputStrategy");
+        var originalStrategy = strategyField.GetValue(manager);
+        var modeProperty = AccessTools.Property(typeof(NControllerManager), "IsUsingController");
+        bool originalMode = manager.IsUsingController;
+        var mapping = (Dictionary<StringName, StringName>)AccessTools.Field(typeof(NInputManager), "_controllerInputMap").GetValue(NInputManager.Instance)!;
+        var originalMapping = new Dictionary<StringName, StringName>(mapping);
+        var originalMappingType = SaveManager.Instance.SettingsSave.ControllerMappingType;
+        try
+        {
+            await ToSignal(GetTree().CreateTimer(.5), SceneTreeTimer.SignalName.Timeout); // Finish mouse hitbox oracle first.
+            strategyField.SetValue(manager, new LabControllerStrategy(new XboxOneConfig())); modeProperty.SetValue(manager, true);
+            mapping.Clear(); foreach (var item in new XboxOneConfig().DefaultControllerInputMap) mapping.Add(item.Key, item.Value);
+            var controller = RewardDemoController.Current!;
+            var tick = Descendants<NTickbox>(controller.GetNode("ReadOnlyRewards")).Single();
+            var exit = Descendants<TextureButton>(controller.GetNode("ReadOnlyRewards")).Single();
+            exit.GrabFocus();
+            bool before = tick.IsTicked;
+            await ControllerTap(Controller.faceButtonNorth);
+            ControllerCheck(tick.IsTicked != before && RewardDemoController.IsViewing, "Y toggles reward upgrades regardless of focus, not exit");
+            ControllerCheck(Descendants<NCard>(controller.GetNode("ReadOnlyRewards")).All(c => c.Model!.IsUpgraded || !c.Model.IsUpgradable), "Y upgrades ALL detached reward cards");
+            var glyph = tick.GetNode<TextureRect>("%ControllerIcon");
+            ControllerCheck(glyph.IsVisibleInTree() && glyph.Texture == NInputManager.Instance!.GetHotkeyIcon(MegaInput.accept), "upgrade checkbox shows native Y icon");
+            strategyField.SetValue(manager, new LabControllerStrategy(new Ps4Config()));
+            // Prevent the native type-change handler from persisting lab settings.
+            SaveManager.Instance.SettingsSave.ControllerMappingType = ControllerMappingType.Playstation;
+            manager.EmitSignal(NControllerManager.SignalName.ControllerTypeChanged);
+            await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+            ControllerCheck(glyph.Texture == NInputManager.Instance!.GetHotkeyIcon(MegaInput.accept), "switching controller type updates native glyphs");
+            mapping[MegaInput.accept] = Controller.faceButtonWest; mapping[MegaInput.topPanel] = Controller.faceButtonNorth;
+            NInputManager.Instance!.EmitSignal(NInputManager.SignalName.InputRebound);
+            await ControllerTap(Controller.faceButtonWest);
+            ControllerCheck(tick.IsTicked == before && glyph.Texture == NInputManager.Instance.GetHotkeyIcon(MegaInput.accept), "rebound upgrade hotkey toggles once and changes glyph");
+            await ControllerTap(Controller.faceButtonEast);
+            ControllerCheck(!RewardDemoController.IsViewing && _localChoice!.IsInsideTree(), "B exits without selecting or skipping local rewards");
+            // Entry is reachable via the ORIGINAL player-list hitbox, not only the detached eye.
+            var row = Descendants<NMultiplayerPlayerState>(NRun.Instance!.GlobalUi.MultiplayerPlayerContainer).Single(s => s.Player.NetId == 2);
+            int released = 0; row.Hitbox.Released += _ => released++;
+            row.Hitbox.GrabFocus(); await ControllerTap(Controller.faceButtonSouth);
+            ControllerCheck(RewardDemoController.ObservedPlayerId == 2 && released == 0, "A on native player row enters without opening original expanded state");
+            await Capture("controller-rewards");
+            await ControllerTap(Controller.faceButtonEast);
+            ControllerCheck(GetViewport().GuiGetFocusOwner() == row.Hitbox, "B restores original player-list focus");
+            ControllerCheck(Players[0].Deck.Cards.Count == _deckBefore, "reward input never claims a card");
+            controller.Enter(2);
+        }
+        catch (Exception e) { Log.Error($"[DemoLab] FAIL: controller reward fixture: {e}"); }
+        finally
+        {
+            mapping.Clear(); foreach (var item in originalMapping) mapping.Add(item.Key, item.Value);
+            AccessTools.Field(typeof(NInputManager), "_controllerInputMap").SetValue(NInputManager.Instance, mapping);
+            SaveManager.Instance.SettingsSave.ControllerMappingType = originalMappingType;
+            strategyField.SetValue(manager, originalStrategy); modeProperty.SetValue(manager, originalMode);
+            NInputManager.Instance!.EmitSignal(NInputManager.SignalName.InputRebound);
+        }
+    }
     private static bool SelectedAvatarTint(ulong id)
     {
         var row = Descendants<MegaCrit.Sts2.Core.Nodes.Multiplayer.NMultiplayerPlayerState>(NRun.Instance!.GlobalUi.MultiplayerPlayerContainer)
@@ -406,6 +596,19 @@ public partial class LabOracle : Node
         if (!Players[0].Creature.IsAlive && Players[1].Creature.IsAlive && entered && visible && CountMirrors() > 0)
         {
             Log.Info("[DemoLab] PASS: dead local player re-entered demo of living friend; hand remains visible.");
+            var manager = NControllerManager.Instance!;
+            var modeProperty = AccessTools.Property(typeof(NControllerManager), "IsUsingController");
+            bool originalMode = manager.IsUsingController;
+            try
+            {
+                modeProperty.SetValue(manager, true);
+                await ControllerTap(Controller.faceButtonEast);
+                NCombatRoom.Instance!.GetCreatureNode(Players[1].Creature)!.Hitbox.GrabFocus();
+                await ControllerTap(Controller.faceButtonSouth);
+                ControllerCheck(DemoController.ObservedPlayerId == 2 && !Players[0].Creature.IsAlive,
+                    "dead observer uses B then A on living friend");
+            }
+            finally { modeProperty.SetValue(manager, originalMode); }
             await Capture("dead-observer");
         }
         else Log.Error($"[DemoLab] FAIL: dead observer entered={entered} visible={visible}.");

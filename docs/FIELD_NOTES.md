@@ -103,3 +103,27 @@ The user confirmed Deck startup of the previous 0.1.1 only.
 
 Input test reference: [Godot 4.5 Viewport.push_input](https://docs.godotengine.org/en/4.5/classes/class_viewport.html#class-viewport-method-push-input).
 The test uses viewport coordinates and the real GUI event path, not just emitting a button's Pressed signal.
+
+## 1.2.1 controller input ownership (2026-10-14)
+
+The native game distinguishes `MegaInput.select` (focused-control selection, Xbox A) from
+`MegaInput.accept` (global confirmation, Xbox Y / local End Turn). `NInputManager` translates
+the current controller mapping late in `_UnhandledInput`; indiscriminately swallowing raw
+joypad events in an observer's `_Input` prevents remapping from working. The run-scoped observer
+now owns only its contextual actions and reads the native mapping when routing a physical
+controller event. Unrelated input passes to the game. Cancel wins over selection for an active
+demo; one press and its matching release get one owner, including release after a remap.
+
+Clone the installed inspect tickbox's `%ControllerIcon` control, get its texture using
+`NInputManager.GetHotkeyIcon`, and preserve its native dimensions/filtering. Use eye
+`SelfModulate` rather than `Modulate`: otherwise the green eye incorrectly tints its child glyph.
+Poll the current glyph for remaps and device changes, without installing custom global bindings.
+Target selection/card-play guards are checked before showing A and accepting an entry.
+
+Fixture gotchas: `ProcessFrame` fires before the UI's next `_Process`; wait two frames before
+asserting a fresh glyph. Switching to PlayStation changes native mapping type and can reset the
+input-map dictionary; keep that change in-memory in the lab and restore both mapping and type.
+The isolated lab uses native controller-config glyphs and synthetic action events, never OS input.
+Physical controllers and actual Steam Input remain a manual release gate.
+
+Reference: [Godot input propagation](https://docs.godotengine.org/en/stable/tutorials/inputs/inputevent.html).

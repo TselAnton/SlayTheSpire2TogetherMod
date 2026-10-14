@@ -11,6 +11,7 @@
     <Compile Include="../../src/Sts2Demo/Networking/DemoScreenMessage.cs" Link="DemoScreenMessage.cs" />
     <Compile Include="../../src/Sts2Demo/Core/DemoScreenAssembly.cs" Link="DemoScreenAssembly.cs" />
     <Compile Include="../../src/Sts2Demo/Core/DemoScreenPolicy.cs" Link="DemoScreenPolicy.cs" />
+    <Compile Include="../../src/Sts2Demo/Core/DemoInputPolicy.cs" Link="DemoInputPolicy.cs" />
     <Reference Include="sts2"><HintPath>$(GameDir)/data_sts2_windows_x86_64/sts2.dll</HintPath></Reference>
     <Reference Include="GodotSharp"><HintPath>$(GameDir)/data_sts2_windows_x86_64/GodotSharp.dll</HintPath></Reference>
   </ItemGroup>

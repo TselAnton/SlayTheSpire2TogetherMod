@@ -319,16 +319,8 @@ public partial class DemoController : Control
         _health?.QueueFree(); _health = null;
     }
 
-    public override void _Input(InputEvent input)
-    {
-        if (!_session.Active) return;
-        if (input is InputEventKey { Pressed: true, Echo: false, Keycode: Key.Escape }
-            || input.IsActionPressed("ui_cancel"))
-        {
-            ExitDemo();
-            GetViewport().SetInputAsHandled();
-        }
-    }
+    // Run-scoped RewardDemoController owns demo input in both combat and rewards.
+    // A single owner prevents cancel/select from firing two actions during exit.
 
     private void Layout(Player player)
     {

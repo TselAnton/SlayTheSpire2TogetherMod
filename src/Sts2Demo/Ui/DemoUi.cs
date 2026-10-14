@@ -1,6 +1,7 @@
 using Godot;
 using System.Text.RegularExpressions;
 using MegaCrit.Sts2.Core.Assets;
+using MegaCrit.Sts2.Core.Nodes.CommonUi;
 
 namespace Sts2Demo.Ui;
 
@@ -74,6 +75,32 @@ internal static partial class DemoUi
             && !t.Name.ToString().Contains("Flash", StringComparison.OrdinalIgnoreCase))?.Texture;
         scene.Free();
         return texture;
+    }
+    public static TextureRect ControllerHint(Control parent)
+    {
+        // Clone the native glyph control (size, texture filtering and theme), not art.
+        var template = PreloadManager.Cache.GetScene("res://scenes/screens/inspect_card_screen.tscn").Instantiate<Control>();
+        var source = Descendants<NTickbox>(template).First(t => t.Name == "Upgrade")
+            .GetNode<TextureRect>("%ControllerIcon");
+        var hint = (TextureRect)source.Duplicate(0);
+        template.Free();
+        hint.Name = "DemoControllerHint";
+        hint.MouseFilter = Control.MouseFilterEnum.Ignore;
+        hint.FocusMode = Control.FocusModeEnum.None;
+        parent.AddChild(hint);
+        hint.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.CenterTop);
+        hint.Position = new((parent.Size.X - hint.Size.X) / 2, -hint.Size.Y - 6);
+        hint.Modulate = Colors.White;
+        hint.ShowBehindParent = false;
+        hint.Hide();
+        return hint;
+    }
+    public static void UpdateHint(TextureRect hint, string action, bool available)
+    {
+        hint.Texture = NInputManager.Instance?.GetHotkeyIcon(action);
+        hint.Visible = available && NControllerManager.Instance?.IsUsingController == true && hint.Texture != null;
+        // Eye size stays fixed; only the glyph above it changes with the native binding.
+        hint.Position = new((hint.GetParent<Control>().Size.X - hint.Size.X) / 2, -hint.Size.Y - 6);
     }
     public static IEnumerable<T> Descendants<T>(Node root) where T : Node
     {

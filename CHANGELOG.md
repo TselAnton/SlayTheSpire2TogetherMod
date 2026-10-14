@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.2.1 — 2026-10-14
+
+- Native controller navigation: select a teammate's combat character or player-list row, then use the focused-selection action (default Xbox A) to enter, switch friends or toggle the green eye off.
+- Native cancel (default B) exits from anywhere in demo. Restore reward-screen focus and consume the matching release so it cannot activate the restored local screen.
+- Native confirm (default Y) toggles all detached reward-card upgrade previews regardless of focus. In combat the same action stays with the LOCAL End Turn button.
+- Authentic installed-game glyph controls and textures, refreshed for controller type, mouse/controller mode and current in-game remappings; no hard-coded physical gamepad buttons.
+- Single-owner press/release routing, including ambiguous aliased mappings and held buttons; normal card targeting and normal gameplay controls remain owned by the game.
+- Expanded isolated controller fixtures and a physical-controller / Steam Deck release checklist.
+
 ## 1.2.0 — 2026-10-14
 
 - Stable rectangular eye hitboxes: no hover scaling of the input control, periodic hide/show or animated-hitbox anchoring.
