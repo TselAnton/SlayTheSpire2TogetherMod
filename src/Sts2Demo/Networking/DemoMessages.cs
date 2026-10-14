@@ -14,6 +14,7 @@ public struct DemoPresenceMessage : INetMessage
     public uint Sequence;
     public RunLocation Location;
     public bool Watching;
+    public bool RequestSnapshot;
     public ulong TargetId;
     public bool ShouldBroadcast => true;
     public NetTransferMode Mode => NetTransferMode.Reliable;
@@ -26,6 +27,7 @@ public struct DemoPresenceMessage : INetMessage
         writer.Write(Location);
         writer.WriteBool(Watching);
         writer.WriteULong(TargetId);
+        writer.WriteBool(RequestSnapshot);
     }
     public void Deserialize(PacketReader reader)
     {
@@ -34,6 +36,7 @@ public struct DemoPresenceMessage : INetMessage
         Location = reader.Read<RunLocation>();
         Watching = reader.ReadBool();
         TargetId = reader.ReadULong();
+        RequestSnapshot = reader.ReadBool();
     }
 }
 
@@ -83,6 +86,7 @@ public struct DemoHandMessage : INetMessage
     public List<DemoCardPose>? Cards;
     public List<DemoCardPose>? Arrow;
     public bool ArrowVisible;
+    public DemoTargetingState Targeting;
     public Vector2 ArrowFrom;
     public Vector2 ArrowTo;
     public Vector2 ArrowTintRG;
@@ -104,6 +108,7 @@ public struct DemoHandMessage : INetMessage
         for (int i = 0; i < count; i++) writer.Write(Cards![i]);
         writer.WriteBool(ArrowVisible); writer.WriteVector2(ArrowFrom); writer.WriteVector2(ArrowTo);
         writer.WriteVector2(ArrowTintRG); writer.WriteVector2(ArrowTintBA);
+        writer.Write(Targeting);
     }
     public void Deserialize(PacketReader reader)
     {
@@ -120,5 +125,6 @@ public struct DemoHandMessage : INetMessage
         ArrowVisible = reader.ReadBool(); ArrowFrom = reader.ReadVector2(); ArrowTo = reader.ReadVector2();
         Arrow = [];
         ArrowTintRG = reader.ReadVector2(); ArrowTintBA = reader.ReadVector2();
+        Targeting = reader.Read<DemoTargetingState>();
     }
 }

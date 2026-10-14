@@ -13,10 +13,11 @@ namespace Sts2Demo;
 public static class ModEntry
 {
     public const string Id = "Sts2Demo";
-    public const string Version = "1.2.2";
+    public const string Version = "1.3.0";
     internal static bool Initialized { get; private set; }
     public static void Initialize()
     {
+        DemoSettings.Load();
         if (OperatingSystem.IsLinux()) Log.Info($"[Friend View] {LinuxHarmonyBootstrap.Prepare()}.");
         new Harmony("together.sts2.demo").PatchAll(typeof(ModEntry).Assembly);
         Initialized = true;
@@ -41,7 +42,7 @@ internal static class BlockLocalPlay
 {
     static bool Prefix(ref bool __result)
     {
-        if (!DemoController.IsViewing) return true;
+        if (!DemoController.IsViewing && !RewardDemoController.IsViewing) return true;
         __result = false;
         return false;
     }
@@ -50,13 +51,13 @@ internal static class BlockLocalPlay
 [HarmonyPatch(typeof(NPlayerHand), nameof(NPlayerHand._UnhandledInput))]
 internal static class BlockHandShortcuts
 {
-    static bool Prefix() => !DemoController.IsViewing;
+    static bool Prefix() => !DemoController.IsViewing && !RewardDemoController.IsViewing;
 }
 
 [HarmonyPatch(typeof(NPlayerHand), nameof(NPlayerHand.SelectCards))]
 internal static class ExitForRequiredChoice
 {
-    static void Prefix() => DemoController.Current?.ExitDemo();
+    static void Prefix() { DemoController.Current?.ExitDemo(); RewardDemoController.Current?.Exit(); }
 }
 
 // The engine allows cosmetic mod mismatches but does not negotiate custom packet types.

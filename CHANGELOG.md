@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.3.0 — release candidate
+
+- Observe supported native events, dialogue, shops, predictions, rest sites, treasure, relic choices and card selection screens. Unknown screens close observation.
+- Send bounded asset/text/geometry state through the game's reliable transport, with changed elements at most twice per second and an explicit full-state recovery request. No screen images are transmitted.
+- Open the observer's native shared map when the watched player opens the map.
+- Add persistent native settings: player-row entry by default or a separate eye button; all supported activities by default or legacy combat/rewards only.
+- Use concise English/Russian setting captions, native right-hand checkboxes and mouse/controller-focus descriptions.
+- Align smaller eyes in one column beyond the widest health bar. Show/hide the whole column together; keep unavailable peers disabled, and highlight pending entry while requesting their state. Controller hints sit to the right.
+- Show the watched player's native header and relics, with an icon-only observation badge. Reward cards use the sender's choices and owner, including after switching friends.
+- Resolve card/potion targeting by creature or player identity. Used potions disappear from the observed header. Preserve local hand input and layout after exiting.
+- Exercise native window projection, settings, ownership, delayed peers, map routing and potion use in an isolated game lab. See docs/RELEASE_1.3.0.md for evidence and outstanding release checks.
+
 ## 1.2.2 — 2026-10-14
 
 - Preserve the local hand layout and exit crossfade when leaving demo.

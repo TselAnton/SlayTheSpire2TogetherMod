@@ -66,6 +66,16 @@ internal static partial class DemoUi
         // The whole square is clickable, including transparent pixels. Never animate
         // this Control's transform: it is also the hitbox and controller focus rect.
         button.TextureClickMask = null;
+        // Godot BaseButton also treats ui_accept as a focused click. The game
+        // owns that action globally (End Turn / confirm); DEMO uses ui_select.
+        // Forward it once to the game's hotkey owner before stopping BaseButton's
+        // GUI click; otherwise GUI consumption prevents _UnhandledInput delivery.
+        button.GuiInput += input =>
+        {
+            if (!input.IsAction("ui_accept")) return;
+            NHotkeyManager.Instance?._UnhandledInput(input);
+            button.AcceptEvent();
+        };
         return button;
     }
     public static Texture2D? LoadEye()
@@ -88,8 +98,8 @@ internal static partial class DemoUi
         hint.MouseFilter = Control.MouseFilterEnum.Ignore;
         hint.FocusMode = Control.FocusModeEnum.None;
         parent.AddChild(hint);
-        hint.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.CenterTop);
-        hint.Position = new((parent.Size.X - hint.Size.X) / 2, -hint.Size.Y - 6);
+        hint.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.TopLeft);
+        hint.Position = new(parent.Size.X + 6, (parent.Size.Y - hint.Size.Y) / 2);
         hint.Modulate = Colors.White;
         hint.ShowBehindParent = false;
         hint.Hide();
@@ -99,8 +109,9 @@ internal static partial class DemoUi
     {
         hint.Texture = NInputManager.Instance?.GetHotkeyIcon(action);
         hint.Visible = available && NControllerManager.Instance?.IsUsingController == true && hint.Texture != null;
-        // Eye size stays fixed; only the glyph above it changes with the native binding.
-        hint.Position = new((hint.GetParent<Control>().Size.X - hint.Size.X) / 2, -hint.Size.Y - 6);
+        // Eye size stays fixed; only the glyph to its right changes with the native binding.
+        var parent = hint.GetParent<Control>();
+        hint.Position = new(parent.Size.X + 6, (parent.Size.Y - hint.Size.Y) / 2);
     }
     public static IEnumerable<T> Descendants<T>(Node root) where T : Node
     {

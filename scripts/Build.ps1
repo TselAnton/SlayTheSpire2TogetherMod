@@ -7,6 +7,12 @@ if (-not $SkipBuild) {
     if ($LASTEXITCODE -ne 0) { throw 'Mod build failed.' }
 }
 $packageDir = Join-Path $repoDir 'dist/Sts2Demo'
+if (Test-Path -LiteralPath $packageDir) {
+    $packageResolved = (Resolve-Path -LiteralPath $packageDir).Path
+    $expected = [IO.Path]::GetFullPath((Join-Path $repoDir 'dist/Sts2Demo'))
+    if ($packageResolved -ne $expected -or -not $packageResolved.StartsWith((Resolve-Path -LiteralPath $repoDir).Path + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) { throw 'Unexpected package directory.' }
+    Remove-Item -LiteralPath $packageResolved -Recurse -Force
+}
 New-Item -ItemType Directory -Force -Path $packageDir | Out-Null
 Copy-Item -LiteralPath "$repoDir/src/Sts2Demo/.godot/mono/temp/bin/Release/Sts2Demo.dll" -Destination $packageDir
 Copy-Item -LiteralPath "$repoDir/src/Sts2Demo/Sts2Demo.json" -Destination $packageDir
@@ -15,13 +21,7 @@ Copy-Item -LiteralPath "$repoDir/CHANGELOG.md" -Destination $packageDir
 Copy-Item -LiteralPath "$repoDir/LICENSE" -Destination $packageDir
 $docsDir = Join-Path $packageDir 'docs'
 New-Item -ItemType Directory -Force -Path $docsDir | Out-Null
-Copy-Item -LiteralPath "$repoDir/docs/COOP_TEST.md", "$repoDir/docs/VERIFICATION.md", "$repoDir/docs/WORKSHOP.md", "$repoDir/docs/PRE_RELEASE_TESTS.md", "$repoDir/docs/RELEASE_CANDIDATE.md" -Destination $docsDir
-Copy-Item -LiteralPath "$repoDir/docs/SUPPORTED_MODES.md" -Destination $docsDir
-Copy-Item -LiteralPath "$repoDir/docs/PLAN_1.2.2.md" -Destination $docsDir
-Copy-Item -LiteralPath "$repoDir/docs/COMBAT_REWARDS_ONLY_1.2.2.md" -Destination $docsDir
-if (Test-Path -LiteralPath "$repoDir/docs/RELEASE_1.2.2.md") {
-    Copy-Item -LiteralPath "$repoDir/docs/RELEASE_1.2.2.md" -Destination $docsDir
-}
+Copy-Item -LiteralPath "$repoDir/docs/COOP_TEST.md", "$repoDir/docs/WORKSHOP.md", "$repoDir/docs/PRE_RELEASE_TESTS.md", "$repoDir/docs/SUPPORTED_MODES.md", "$repoDir/docs/PLAN_1.3.0.md", "$repoDir/docs/RELEASE_1.3.0.md" -Destination $docsDir
 $manifest = Get-Content -Raw "$repoDir/src/Sts2Demo/Sts2Demo.json" | ConvertFrom-Json
 Add-Type -AssemblyName System.IO.Compression
 function Write-PortableModArchive([string]$Destination) {

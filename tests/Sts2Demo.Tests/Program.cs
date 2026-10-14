@@ -206,3 +206,64 @@ var cursorOnly = Roundtrip(new DemoRewardMessage { ProtocolVersion = DemoRewardM
     Cursor = new(.2f, .4f), Cards = [], Labels = [], Entries = [] });
 Check(cursorOnly.Delta && cursorOnly.Cards!.Count == 0, "Cursor-only reward update contains no option retransmission");
 Console.WriteLine($"PASS: {assertions} final validated 1.2.2 assertions.");
+
+foreach (var screen in new[] { "NEventRoom", "NMerchantRoom", "NMerchantInventory", "NFakeMerchantInventory", "NCrystalSphereScreen", "NRestSiteRoom", "NTreasureRoom", "NChooseARelicSelection", "NDeckUpgradeSelectScreen", "NMapScreen", "NMapRoom" })
+    Check(DemoScreenPolicy.Allowed(screen, screen == "NRestSiteRoom", false, allActivities: true), "All-activities allows " + screen);
+Check(!DemoScreenPolicy.Allowed("FutureRoom", false, false, allActivities: true), "Unknown future room fails closed");
+Check(!DemoScreenPolicy.Allowed("NSettingsScreen", false, false, allActivities: true), "Personal settings remain local");
+Check(!DemoScreenPolicy.Allowed("NCombatRoom", false, true, allActivities: true), "Combat room uses its dedicated renderer");
+Check(DemoScreenPolicy.Allowed("NCombatPileCardSelectScreen", false, true, allActivities: true), "In-combat selection uses native activity projection");
+var typedScreen = Roundtrip(new DemoRewardMessage { ProtocolVersion = DemoRewardMessage.Protocol, Screen = "NMerchantInventory",
+    Kind = DemoRewardKind.Activity, Cards = [], Labels = [], Entries = [] });
+Check(typedScreen.Screen == "NMerchantInventory", "Reliable state identifies its native screen");
+Check(typedScreen.Mode == MegaCrit.Sts2.Core.Multiplayer.Transport.NetTransferMode.Reliable, "Complete reward/window states are reliable");
+typedScreen.Delta = true;
+Check(typedScreen.Mode == MegaCrit.Sts2.Core.Multiplayer.Transport.NetTransferMode.Unreliable, "Cursor deltas never queue behind state");
+var resync = Roundtrip(new DemoPresenceMessage { RequestSnapshot = true });
+Check(resync.RequestSnapshot, "Observer can request snapshot after switch or desynchronization");
+Console.WriteLine($"PASS: {assertions} total 1.3.0 assertions.");
+foreach (byte targetKind in new byte[] { 0, 1, 2 })
+{
+    var aim = new DemoTargetingState { Visible = true, From = new(.3f, .1f), To = new(.8f, .4f), Offset = new(.01f, -.02f),
+        TargetKind = targetKind, TargetId = 123, TintRG = new(1, .4f), TintBA = new(.3f, 1) };
+    var restoredAim = Roundtrip(aim);
+    Check(restoredAim.Valid && restoredAim.TargetKind == targetKind && restoredAim.TargetId == 123
+        && restoredAim.Offset == aim.Offset && restoredAim.To == aim.To, "Potion target identity and coordinates roundtrip " + targetKind);
+    var withArrow = Roundtrip(new DemoRewardMessage { Cards = [], Labels = [], Targeting = aim });
+    Check(withArrow.Targeting.To == aim.To, "Outside-combat potion target survives window protocol " + targetKind);
+}
+Check(!new DemoTargetingState { Visible = true, To = new(float.NaN, 0) }.Valid, "Non-finite potion target rejected");
+Check(!new DemoTargetingState { Visible = true, TargetKind = 99 }.Valid, "Unknown potion target kind rejected");
+Check(!new DemoTargetingState { Visible = true, Offset = new(99, 0) }.Valid, "Potion target offset bounded");
+Check(DemoVisualCodec.SafeAsset("res://animations/characters/silent/silent_skel_data.tres"), "Native character animation assets accepted");
+Check(!DemoVisualCodec.Valid(metadata with { Items = [metadata.Items[0] with { SpineMaterials = new() { ["script"] = "res://scenes/code.cs" } }] }), "Spine property names restricted to rendering materials");
+Check(!DemoVisualCodec.Valid(metadata with { Items = [metadata.Items[0] with { SpineMaterials = new() { ["normal_material"] = "user://private.tres" } }] }), "Spine material cannot read private paths");
+var iconA = new DemoRewardMessage { Cards = [], Labels = [], Entries = [new("Gold", "10", [new() { Id = "icon" }])] };
+var iconB = iconA;
+iconB.Entries = [new("Gold", "10", [new() { Id = "icon", Tint = [.2f, .2f, .2f, 1] }])];
+Check(iconA.ContentKey() != iconB.ContentKey(), "Changed reward icon state invalidates the render cache");
+Console.WriteLine($"PASS: {assertions} complete 1.3.0 protocol assertions.");
+var effects = metadata with { Items = [metadata.Items[0] with { Kind = 7,
+    ParticleMaterial = "res://materials/fog.tres", Particles = [24, 8, 0, 1, 1, 1, 0, 1, 8],
+    AncientBanner = [1, 2, 3], SpinePlayback = [0, 0, 1.5f], LineSeparation = -8, ParagraphSeparation = 12 }] };
+var decodedEffects = DemoVisualCodec.Decode(DemoVisualCodec.Encode(effects)).Items[0];
+Check(decodedEffects.Particles.SequenceEqual(effects.Items[0].Particles)
+    && decodedEffects.AncientBanner.SequenceEqual(effects.Items[0].AncientBanner)
+    && decodedEffects.SpinePlayback.SequenceEqual(effects.Items[0].SpinePlayback)
+    && decodedEffects.LineSeparation == -8 && decodedEffects.ParagraphSeparation == 12,
+    "Native particles, banner and text spacing survive metadata serialization");
+Check(!DemoVisualCodec.Valid(effects with { Items = [effects.Items[0] with { Particles = [1] }] }), "Incomplete particle state rejected");
+Check(!DemoVisualCodec.Valid(effects with { Items = [effects.Items[0] with { Particles = [9000, 8, 0, 1, 1, 1, 0, 1, 8] }] }), "Particle budget bounded");
+Check(!DemoVisualCodec.Valid(effects with { Items = [effects.Items[0] with { AncientBanner = [float.NaN, 0, 0] }] }), "Nonfinite native text effect rejected");
+Console.WriteLine($"PASS: {assertions} complete 1.3.0 assertions including native effects.");
+var shadowed = metadata with { Items = [metadata.Items[0] with { Shadow = [2, -3, 4], ShadowColor = [0, 0, 0, .75f] }] };
+var decodedShadow = DemoVisualCodec.Decode(DemoVisualCodec.Encode(shadowed)).Items[0];
+Check(decodedShadow.Shadow.SequenceEqual(shadowed.Items[0].Shadow) && decodedShadow.ShadowColor[3] == .75f, "Native text shadow roundtrip");
+Check(!DemoVisualCodec.Valid(shadowed with { Items = [shadowed.Items[0] with { Shadow = [2, 9999, 0] }] }), "Oversized text shadow rejected");
+Check(!DemoVisualCodec.Valid(shadowed with { Items = [shadowed.Items[0] with { ShadowColor = [0, 0, 0, float.NaN] }] }), "Nonfinite shadow rejected");
+Console.WriteLine($"PASS: {assertions} final 1.3.0 assertions.");
+var masked = metadata with { Items = [metadata.Items[0] with { AlphaMasks = [new() { Asset = "res://images/ui/noise_mask_for_lines.tres" }] }] };
+Check(DemoVisualCodec.Decode(DemoVisualCodec.Encode(masked)).Items[0].AlphaMasks[0].Asset == masked.Items[0].AlphaMasks[0].Asset, "Native alpha mask roundtrip");
+Check(!DemoVisualCodec.Valid(masked with { Items = [masked.Items[0] with { AlphaMasks = [new() { Asset = "user://secret.tres" }] }] }), "Private alpha mask path rejected");
+Check(!DemoVisualCodec.Valid(masked with { Items = [masked.Items[0] with { AlphaMasks = Enumerable.Repeat(masked.Items[0].AlphaMasks[0], 5).ToList() }] }), "Alpha mask nesting bounded");
+Console.WriteLine($"PASS: {assertions} final 1.3.0 assertions with alpha masks.");

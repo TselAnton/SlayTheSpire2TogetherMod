@@ -6,17 +6,52 @@ using MegaCrit.Sts2.Core.Events.Custom.CrystalSphereEvent;
 using MegaCrit.Sts2.addons.mega_text;
 using MegaCrit.Sts2.Core.Nodes.CommonUi;
 using MegaCrit.Sts2.Core.Assets;
+using MegaCrit.Sts2.Core.Bindings.MegaSpine;
+using MegaCrit.Sts2.Core.Helpers;
 
 namespace Sts2Demo.Ui;
 
 /// <summary>Read-only local display primitives using installed assets. No screen scripts are instantiated remotely.</summary>
 public partial class DemoVisualProjection : Control
 {
+    private sealed record BoneReferences(GodotObject Skeleton, (GodotObject Bone, string Name)[] Bones);
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<Node, BoneReferences> BoneCache = new();
+    public static List<DemoVisual> CaptureActivity(Node root)
+    {
+        var room = MegaCrit.Sts2.Core.Nodes.NRun.Instance?.GetNodeOrNull<Node>("RoomContainer");
+        if (room == null) return Capture(root, Transform2D.Identity);
+        var background = Capture(room, Transform2D.Identity);
+        bool insideRoom = room == root || room.IsAncestorOf(root);
+        // Shared overlay backstop is a sibling of the active screen, not its child.
+        var overlays = MegaCrit.Sts2.Core.Nodes.Screens.Overlays.NOverlayStack.Instance;
+        var capstones = MegaCrit.Sts2.Core.Nodes.Screens.Capstones.NCapstoneContainer.Instance;
+        var result = background.Select(v => v with { Id = "room/" + v.Id }).ToList();
+        // Inspectors live above NRun. Preserve the visible card/reward/deck window
+        // underneath them, as well as each container's shared dimming backstop.
+        var layers = new List<Node>();
+        if (!insideRoom)
+        {
+            if (overlays != null) layers.Add(overlays);
+            if (capstones != null) layers.Add(capstones);
+            if (!layers.Any(layer => layer == root || layer.IsAncestorOf(root))) layers.Add(root);
+        }
+        // Native keyword/card/relic tips live in the game's global overlay,
+        // outside both the room and inspector. Capture their visible primitives too.
+        if (MegaCrit.Sts2.Core.Nodes.NGame.Instance?.HoverTipsContainer is { } tips) layers.Add(tips);
+        for (int i = 0; i < layers.Count; i++)
+            result.AddRange(Capture(layers[i], Transform2D.Identity).Select(v => v with
+                { Id = $"layer{i}/" + v.Id, Z = v.Z + (i + 1) * 134217728 }));
+        if (result.Count > DemoVisualCodec.MaxVisuals) throw new InvalidDataException("Activity exceeds visual budget.");
+        return result;
+    }
     private readonly Dictionary<string, Control> _nodes = [];
     private readonly Dictionary<string, Resource?> _assets = [];
     private readonly DemoVisualState _state = new();
     private Vector2 _reference = new(1920, 1080);
     public int VisualCount => _nodes.Count;
+    public float ChromeOpacity => _state.Screen is "NInspectCardScreen" or "NInspectRelicScreen"
+        ? 1 - _state.Items.Values.Where(v => v.Kind == 3 && v.Size[0] >= _reference.X && v.Size[1] >= _reference.Y)
+            .Select(v => v.Tint[3]).DefaultIfEmpty(0).Max() : 1;
     public bool Apply(DemoVisualUpdate update, uint sequence)
     {
         if (!_state.Apply(update, sequence)) return false;
@@ -41,6 +76,8 @@ public partial class DemoVisualProjection : Control
                 display.AddChild(node);
             }
             AddChild(display); _nodes[visual.Id] = display;
+            if (node is NCommonBanner banner)
+            { banner.label.SetTextAutoSize(visual.Text); banner.label.Modulate = Colors.White; }
             node.Name = "Visual";
             node.Size = new(visual.Size[0], visual.Size[1]);
             var transform = new Transform2D(new(visual.Transform[0], visual.Transform[1]),
@@ -91,6 +128,26 @@ public partial class DemoVisualProjection : Control
             node.ZIndex = 0;
             display.ZIndex = 0;
             DemoUi.ReadOnly(node);
+            foreach (var mask in visual.AlphaMasks)
+            {
+                var maskTexture = Asset<Texture2D>(mask.Asset);
+                if (maskTexture == null) throw new InvalidDataException("Native alpha mask resource unavailable.");
+                var maskTransform = new Transform2D(new(mask.Transform[0], mask.Transform[1]),
+                    new(mask.Transform[2], mask.Transform[3]), new(mask.Transform[4], mask.Transform[5]));
+                Control wrapper = mask.Patch.Length == 4
+                    ? new NinePatchRect { Texture = maskTexture, PatchMarginLeft = mask.Patch[0], PatchMarginTop = mask.Patch[1],
+                        PatchMarginRight = mask.Patch[2], PatchMarginBottom = mask.Patch[3] }
+                    : new TextureRect { Texture = maskTexture, ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
+                        StretchMode = (TextureRect.StretchModeEnum)mask.Stretch };
+                wrapper.ClipChildren = ClipChildrenMode.Only; wrapper.MouseFilter = MouseFilterEnum.Ignore;
+                wrapper.Size = new(mask.Size[0], mask.Size[1]); wrapper.Position = maskTransform.Origin;
+                wrapper.Rotation = maskTransform.Rotation; wrapper.Scale = maskTransform.Scale;
+                var relative = maskTransform.AffineInverse() * display.GetTransform();
+                RemoveChild(display); wrapper.AddChild(display); AddChild(wrapper);
+                display.Position = relative.Origin; display.Rotation = relative.Rotation; display.Scale = relative.Scale;
+                display = wrapper;
+            }
+            _nodes[visual.Id] = display;
         }
         int drawIndex = 0;
         foreach (var visual in _state.Items.Values.OrderBy(v => v.Z).ThenBy(v => v.Id, StringComparer.Ordinal))
@@ -114,6 +171,50 @@ public partial class DemoVisualProjection : Control
     }
     private Control? CreateVisual(DemoVisual visual)
     {
+        if (visual.Kind == 7)
+        {
+            if (visual.Particles.Length != 9 || Asset<Material>(visual.ParticleMaterial) is not { } material) return null;
+            var p = visual.Particles;
+            var particles = new GpuParticles2D { ProcessMaterial = material, Texture = Asset<Texture2D>(visual.Asset),
+                Amount = Math.Clamp((int)p[0], 1, 2048), Lifetime = Math.Clamp(p[1], .01, 60),
+                Explosiveness = Math.Clamp(p[2], 0, 1), Randomness = Math.Clamp(p[3], 0, 1), SpeedScale = Math.Clamp(p[4], 0, 4),
+                Emitting = p[5] != 0, OneShot = p[6] != 0, LocalCoords = p[7] != 0, Preprocess = Math.Min(p[8], 8) };
+            var container = new Control { MouseFilter = MouseFilterEnum.Ignore };
+            container.AddChild(particles); return container;
+        }
+        if (visual.Kind == 6)
+        {
+            var resource = Asset<Resource>(visual.Asset);
+            if (resource == null || resource.GetClass() != "SpineSkeletonDataResource") return null;
+            var container = new Control { MouseFilter = MouseFilterEnum.Ignore };
+            var sprite = ClassDB.Instantiate("SpineSprite").As<Node2D>();
+            foreach (var property in visual.SpineMaterials)
+                if (Asset<Material>(property.Value) is { } material) sprite.Set(property.Key, material);
+            sprite.Set("skeleton_data_res", resource);
+            foreach (var slot in visual.SpineSlots)
+            {
+                var slotNode = ClassDB.Instantiate("SpineSlotNode").As<Node2D>();
+                slotNode.Set("slot_name", slot.Key);
+                foreach (var property in slot.Value)
+                    if (Asset<Material>(property.Value) is { } material) slotNode.Set(property.Key, material);
+                sprite.AddChild(slotNode);
+            }
+            container.AddChild(sprite);
+            var binding = new MegaSprite(sprite);
+            container.Ready += () => container.RunWhenSpineReady(binding, state =>
+            {
+                if (visual.Skin != "") binding.GetSkeleton()?.SetSkinByName(visual.Skin);
+                if (visual.Animation != "" && binding.HasAnimation(visual.Animation))
+                {
+                    var playback = visual.SpinePlayback;
+                    var entry = state.SetAnimation(visual.Animation, playback.Length != 3 || playback[0] != 0);
+                    if (entry != null && playback.Length == 3)
+                    { entry.SetTimeScale(Math.Clamp(playback[1], 0, 4)); entry.SetTrackTime(playback[2]); }
+                }
+                foreach (string bone in visual.HiddenBones) binding.GetSkeleton()?.FindBone(bone)?.Hide();
+            });
+            return container;
+        }
         if (visual.Kind == 5)
         {
             var template = PreloadManager.Cache.GetScene("res://scenes/screens/card_selection/card_reward_selection_screen.tscn").Instantiate<Control>();
@@ -136,7 +237,7 @@ public partial class DemoVisualProjection : Control
                 PatchMarginLeft = (int)visual.Patch[0], PatchMarginTop = (int)visual.Patch[1],
                 PatchMarginRight = (int)visual.Patch[2], PatchMarginBottom = (int)visual.Patch[3] };
             return new TextureRect { Texture = texture, ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
-                StretchMode = (TextureRect.StretchModeEnum)visual.Stretch };
+                StretchMode = (TextureRect.StretchModeEnum)visual.Stretch, FlipH = visual.FlipH, FlipV = visual.FlipV };
         }
         if (visual.Kind == 3) return new ColorRect { Color = Colors.White };
         var font = Asset<Font>(visual.Font);
@@ -147,7 +248,9 @@ public partial class DemoVisualProjection : Control
             label.AddThemeFontSizeOverride("font_size", visual.FontSize);
             label.AddThemeColorOverride("font_color", Colors.White);
             label.AddThemeConstantOverride("outline_size", visual.OutlineSize);
+            label.AddThemeConstantOverride("line_spacing", visual.LineSeparation);
             label.AddThemeColorOverride("font_outline_color", new(visual.OutlineColor[0], visual.OutlineColor[1], visual.OutlineColor[2], visual.OutlineColor[3]));
+            ApplyShadow(label, visual);
             if (font != null) label.AddThemeFontOverride("font", font);
             return label;
         }
@@ -159,28 +262,44 @@ public partial class DemoVisualProjection : Control
             rich.AddThemeFontSizeOverride(key, visual.FontSize);
         rich.AddThemeColorOverride("default_color", Colors.White);
         rich.AddThemeConstantOverride("outline_size", visual.OutlineSize);
+        rich.AddThemeConstantOverride("line_separation", visual.LineSeparation);
+        rich.AddThemeConstantOverride("paragraph_separation", visual.ParagraphSeparation);
         rich.AddThemeColorOverride("font_outline_color", new(visual.OutlineColor[0], visual.OutlineColor[1], visual.OutlineColor[2], visual.OutlineColor[3]));
-        foreach (string key in new[] { "normal_font", "bold_font", "italics_font", "bold_italics_font" })
-            rich.AddThemeFontOverride(key, font ?? ThemeDB.FallbackFont);
+        ApplyShadow(rich, visual);
+        rich.AddThemeFontOverride("normal_font", font ?? ThemeDB.FallbackFont);
+        rich.AddThemeFontOverride("bold_font", Asset<Font>(visual.BoldFont) ?? font ?? ThemeDB.FallbackFont);
+        rich.AddThemeFontOverride("italics_font", Asset<Font>(visual.ItalicFont) ?? font ?? ThemeDB.FallbackFont);
+        rich.AddThemeFontOverride("bold_italics_font", Asset<Font>(visual.BoldItalicFont) ?? font ?? ThemeDB.FallbackFont);
         rich.Text = visual.Text;
+        if (visual.Text.Contains("[ancient_banner]", StringComparison.Ordinal))
+        {
+            var effect = new MegaCrit.Sts2.Core.RichTextTags.RichTextAncientBanner { Rotation = 1 };
+            if (visual.AncientBanner.Length == 3)
+            { effect.Rotation = visual.AncientBanner[0]; effect.Spacing = visual.AncientBanner[1]; effect.CenterCharacter = visual.AncientBanner[2]; }
+            rich.InstallEffect(effect);
+            rich.ParseBbcode(visual.Text);
+        }
         return rich;
+    }
+
+    private static void ApplyShadow(Control label, DemoVisual visual)
+    {
+        label.AddThemeColorOverride("font_shadow_color", new(visual.ShadowColor[0], visual.ShadowColor[1], visual.ShadowColor[2], visual.ShadowColor[3]));
+        label.AddThemeConstantOverride("shadow_outline_size", visual.Shadow[0]);
+        label.AddThemeConstantOverride("shadow_offset_x", visual.Shadow[1]);
+        label.AddThemeConstantOverride("shadow_offset_y", visual.Shadow[2]);
     }
 
     public static List<DemoVisual> Capture(Node root, Transform2D inverse, bool requireTree = true)
     {
         var visuals = new List<DemoVisual>();
-        var cellNodes = root is NCrystalSphereScreen ? DemoUi.Descendants<NCrystalSphereCell>(root).ToList() : [];
+        var cellNodes = DemoUi.Descendants<NCrystalSphereCell>(root).ToList();
         var cells = cellNodes.Select(c => c.Entity).ToList();
         int order = 0;
-        foreach (var node in new[] { root }.Concat(DemoUi.Descendants<Node>(root)))
+        foreach (var node in DrawOrder(root))
         {
             if (node is not CanvasItem canvas || (requireTree ? !canvas.IsVisibleInTree() : !canvas.Visible)) continue;
-            // The native banner uses its own composed artwork. Send its title and
-            // placement once, and instantiate that installed UI component locally.
-            bool bannerChild = false;
-            for (var parent = node.GetParent(); parent != null && parent != root.GetParent(); parent = parent.GetParent())
-                if (parent is NCommonBanner) { bannerChild = true; break; }
-            if (bannerChild) continue;
+            if (canvas.ClipChildren == ClipChildrenMode.Only) continue;
             // The fog shader hides underlying item sprites without changing their
             // Visible flag. Do not put wholly hidden item identity on the network.
             bool hiddenItem = false; CrystalSphereItem? predictionItem = null;
@@ -194,22 +313,29 @@ public partial class DemoVisualProjection : Control
             if (hiddenItem) continue;
             if (node.Name.ToString().Contains("ControllerIcon", StringComparison.Ordinal)
                 || node is MegaCrit.Sts2.Core.Nodes.Multiplayer.NRemoteMouseCursor) continue;
-            if (node is not Control && node is not Sprite2D && node is not AnimatedSprite2D) continue;
+            bool spine = node.GetClass() == "SpineSprite";
+            if (node is not Control && node is not Sprite2D && node is not AnimatedSprite2D && node is not GpuParticles2D && !spine) continue;
             Texture2D? texture = node switch
             {
                 TextureRect rect => rect.Texture,
                 NinePatchRect patch => patch.Texture,
                 TextureButton button => button.TextureNormal,
                 Sprite2D sprite => sprite.Texture,
+                GpuParticles2D particles => particles.Texture,
                 AnimatedSprite2D sprite when sprite.SpriteFrames != null => sprite.SpriteFrames.GetFrameTexture(sprite.Animation, sprite.Frame),
+                // Some game scripts derive from Control but are attached to a
+                // native TextureRect (notably banners). C# 'is TextureRect' is false.
+                _ when node.IsClass("TextureRect") => node.Get("texture").AsGodotObject() as Texture2D,
                 _ => null,
             };
             byte kind; string text = "", fontPath = ""; int fontSize = 22, align = 0, vertical = 0, wrap = 0, outlineSize = 0;
             var outlineColor = Colors.Transparent;
+            var shadowColor = Colors.Transparent;
+            int[] shadow = [0, 0, 0];
             var color = Colors.White;
             Vector2 size = node is Control control ? control.Size : texture?.GetSize() ?? Vector2.One;
-            if (node is NCommonBanner banner)
-            { kind = 5; text = banner.label.Text; size = size.Max(Vector2.One); }
+            if (spine) kind = 6;
+            else if (node is GpuParticles2D) kind = 7;
             else if (texture != null) kind = 0;
             else if (node is Label label)
             {
@@ -219,6 +345,10 @@ public partial class DemoVisualProjection : Control
                 vertical = (int)label.VerticalAlignment; wrap = (int)label.AutowrapMode;
                 outlineSize = label.LabelSettings?.OutlineSize ?? label.GetThemeConstant("outline_size");
                 outlineColor = label.LabelSettings?.OutlineColor ?? label.GetThemeColor("font_outline_color");
+                shadowColor = label.LabelSettings?.ShadowColor ?? label.GetThemeColor("font_shadow_color");
+                shadow = [label.LabelSettings?.ShadowSize ?? label.GetThemeConstant("shadow_outline_size"),
+                    (int)(label.LabelSettings?.ShadowOffset.X ?? label.GetThemeConstant("shadow_offset_x")),
+                    (int)(label.LabelSettings?.ShadowOffset.Y ?? label.GetThemeConstant("shadow_offset_y"))];
             }
             else if (node is RichTextLabel rich)
             {
@@ -226,12 +356,35 @@ public partial class DemoVisualProjection : Control
                 fontSize = rich.GetThemeFontSize("normal_font_size"); color = rich.GetThemeColor("default_color");
                 align = (int)rich.HorizontalAlignment; vertical = (int)rich.VerticalAlignment; wrap = (int)rich.AutowrapMode;
                 outlineSize = rich.GetThemeConstant("outline_size"); outlineColor = rich.GetThemeColor("font_outline_color");
+                shadowColor = rich.GetThemeColor("font_shadow_color");
+                shadow = [rich.GetThemeConstant("shadow_outline_size"), rich.GetThemeConstant("shadow_offset_x"), rich.GetThemeConstant("shadow_offset_y")];
             }
-            else if (node is ColorRect solid) { kind = 3; color = solid.Color; }
+            else if (node.IsClass("ColorRect")) { kind = 3; color = node.Get("color").AsColor(); }
             else if (node is NCrystalSphereMask) kind = 3;
             else continue;
             if (size.X <= 0 || size.Y <= 0 || text.Length > 4096) continue;
             Rect2? clipRect = null;
+            var alphaMasks = new List<DemoAlphaMask>();
+            for (var ancestor = node.GetParent(); ancestor != null && ancestor != root.GetParent(); ancestor = ancestor.GetParent())
+            {
+                if (ancestor is not CanvasItem { ClipChildren: not ClipChildrenMode.Disabled } mask) continue;
+                // CanvasGroup's internal clip mode composites its children's union;
+                // it is not a texture alpha stencil supplied by the parent.
+                if (mask is CanvasGroup || mask.IsClass("CanvasGroup")) continue;
+                // Empty Control containers have no own alpha silhouette; their
+                // drawable descendant mask is captured separately (native HP bars).
+                if (mask.GetClass() == "Control") continue;
+                if ((!mask.IsClass("TextureRect") && mask is not NinePatchRect) || mask.Get("texture").AsGodotObject() is not Texture2D maskTexture
+                    || !DemoVisualCodec.SafeAsset(maskTexture.ResourcePath) || maskTexture.ResourcePath == "")
+                    throw new InvalidDataException($"Unsupported native alpha mask: {mask.GetPath()} ({mask.GetClass()}).");
+                var maskTransform = inverse * mask.GetGlobalTransformWithCanvas();
+                var maskSize = mask.Get("size").AsVector2();
+                alphaMasks.Add(new DemoAlphaMask { Asset = maskTexture.ResourcePath, Size = [maskSize.X, maskSize.Y],
+                    Transform = [maskTransform.X.X, maskTransform.X.Y, maskTransform.Y.X, maskTransform.Y.Y, maskTransform.Origin.X, maskTransform.Origin.Y],
+                    Stretch = mask is NinePatchRect ? 0 : mask.Get("stretch_mode").AsInt32(),
+                    Patch = mask is NinePatchRect maskPatch ? [maskPatch.PatchMarginLeft, maskPatch.PatchMarginTop, maskPatch.PatchMarginRight, maskPatch.PatchMarginBottom] : [] });
+                if (alphaMasks.Count > 4) throw new InvalidDataException("Native mask depth exceeds budget.");
+            }
             // Respect clipping without reading any GPU pixels.
             if (node is Control clipped)
             {
@@ -252,6 +405,55 @@ public partial class DemoVisualProjection : Control
             var transform = inverse * canvas.GetGlobalTransformWithCanvas();
             if (node is Sprite2D { Centered: true } or AnimatedSprite2D { Centered: true }) transform.Origin -= transform.BasisXform(size / 2);
             string asset = texture?.ResourcePath ?? ""; float[] region = [], margin = [], patchMargins = [];
+            string animation = "";
+            float[] spinePlayback = [];
+            var spineMaterials = new Dictionary<string, string>();
+            var spineSlots = new Dictionary<string, Dictionary<string, string>>();
+            string[] hiddenBones = []; string skin = "";
+            if (spine)
+            {
+                asset = (node.Get("skeleton_data_res").AsGodotObject() as Resource)?.ResourcePath ?? "";
+                var state = new MegaSprite(node).TryGetAnimationState();
+                // Native get_current can return an Object variant containing null.
+                var track = state == null ? null : SpineCall(state.BoundObject, "get_current", 0).AsGodotObject();
+                animation = track == null ? "" : new MegaTrackEntry(track).GetAnimationName();
+                if (track != null)
+                {
+                    bool loop = !track.HasMethod("get_loop") || SpineCall(track, "get_loop").AsBool();
+                    float speed = track.HasMethod("get_time_scale") ? SpineCall(track, "get_time_scale").AsSingle() : 1;
+                    if (state?.BoundObject.HasMethod("get_time_scale") == true)
+                        speed *= SpineCall(state.BoundObject, "get_time_scale").AsSingle();
+                    // Frozen/native one-shot poses must not turn into endlessly looping animations.
+                    // Idle loops advance locally and do not create clock-only network updates.
+                    var entry = new MegaTrackEntry(track);
+                    float time = !loop || speed == 0 ? Math.Min(entry.GetTrackTime(), entry.GetAnimationEnd()) : 0;
+                    spinePlayback = [loop ? 1 : 0, Math.Clamp(speed, 0, 4), Math.Clamp(MathF.Round(time * 10) / 10, 0, 3600)];
+                }
+                if (!DemoVisualCodec.SafeAsset(asset) || asset == "") continue;
+                spineMaterials = CaptureSpineMaterials(node);
+                foreach (var slot in node.GetChildren().Where(n => n.GetClass() == "SpineSlotNode"))
+                    spineSlots[slot.Get("slot_name").AsString()] = CaptureSpineMaterials(slot);
+                var skeleton = new MegaSprite(node).GetSkeleton()?.BoundObject;
+                if (skeleton?.HasMethod("get_bones") == true)
+                {
+                    // Reuse bone wrappers for this skeleton. Enumerating every bone
+                    // every sample creates many native signal subscriptions and GC
+                    // finalizers while the source sprite is still rendering.
+                    if (!BoneCache.TryGetValue(node, out var references) || references.Skeleton != skeleton)
+                    {
+                        var bones = SpineCall(skeleton, "get_bones").AsGodotArray().Select(v => v.AsGodotObject())
+                            .Select(b => (b, SpineCall(SpineCall(b, "get_data").AsGodotObject(), "get_name").AsString())).ToArray();
+                        references = new(skeleton, bones); BoneCache.Remove(node); BoneCache.Add(node, references);
+                    }
+                    hiddenBones = references.Bones.Where(b => SpineCall(b.Bone, "get_scale_x").AsSingle() == 0
+                        && SpineCall(b.Bone, "get_scale_y").AsSingle() == 0).Select(b => b.Name).Take(128).ToArray();
+                }
+                if (skeleton?.HasMethod("get_skin") == true)
+                {
+                    var currentSkin = SpineCall(skeleton, "get_skin").AsGodotObject();
+                    skin = currentSkin == null ? "" : SpineCall(currentSkin, "get_name").AsString();
+                }
+            }
             if (node is NinePatchRect nine)
             { kind = 4; patchMargins = [nine.PatchMarginLeft, nine.PatchMarginTop, nine.PatchMarginRight, nine.PatchMarginBottom]; }
             if (texture is AtlasTexture atlasTexture)
@@ -264,9 +466,10 @@ public partial class DemoVisualProjection : Control
             }
             if (kind is 0 or 4 && (asset == "" || !DemoVisualCodec.SafeAsset(asset))) continue;
             if (!DemoVisualCodec.SafeAsset(fontPath)) fontPath = "";
-            var material = canvas.Material as ShaderMaterial;
-            for (var parent = node.GetParent(); material == null && canvas.UseParentMaterial && parent != null; parent = parent.GetParent())
-                if (parent is CanvasItem parentCanvas) material = parentCanvas.Material as ShaderMaterial;
+            var materialOwner = canvas;
+            while (materialOwner.UseParentMaterial && materialOwner.GetParent() is CanvasItem parentCanvas)
+                materialOwner = parentCanvas;
+            var material = materialOwner.Material as ShaderMaterial;
             string shaderPath = material?.Shader?.ResourcePath ?? "";
             if (!DemoVisualCodec.SafeShader(shaderPath)) shaderPath = "";
             var uniforms = new Dictionary<string, float[]>(); var uniformTextures = new Dictionary<string, string>();
@@ -307,14 +510,32 @@ public partial class DemoVisualProjection : Control
             for (Node? parent = node; parent != null; parent = parent.GetParent())
                 if (parent is CanvasItem item) { z += item.ZIndex; if (!item.ZAsRelative) break; }
             static float Q(float x) => MathF.Round(x * 2) / 2;
+            var ancientEffect = (node as RichTextLabel)?.CustomEffects.Select(v => v.AsGodotObject())
+                .OfType<MegaCrit.Sts2.Core.RichTextTags.RichTextAncientBanner>().FirstOrDefault();
             var visual = new DemoVisual { Id = root.GetPathTo(node).ToString(), Kind = kind,
                 Transform = [transform.X.X, transform.X.Y, transform.Y.X, transform.Y.Y, Q(transform.Origin.X), Q(transform.Origin.Y)],
-                Size = [size.X, size.Y], Tint = [color.R, color.G, color.B, color.A], Asset = asset, Region = region, Margin = margin, Patch = patchMargins,
-                Text = text, Font = fontPath, FontSize = Math.Clamp(fontSize, 1, 180), Align = align, Z = Math.Clamp(z * 128 + order++, -4096, 4096),
+                Size = [size.X, size.Y], Tint = [color.R, color.G, color.B, color.A], Asset = asset, Animation = animation, SpinePlayback = spinePlayback,
+                SpineMaterials = spineMaterials, SpineSlots = spineSlots, HiddenBones = hiddenBones, Skin = skin,
+                ParticleMaterial = node is GpuParticles2D pm ? pm.ProcessMaterial?.ResourcePath ?? "" : "",
+                Particles = node is GpuParticles2D pg ? [pg.Amount, (float)pg.Lifetime, pg.Explosiveness, pg.Randomness, (float)pg.SpeedScale,
+                    pg.Emitting ? 1 : 0, pg.OneShot ? 1 : 0, pg.LocalCoords ? 1 : 0, (float)Math.Max(pg.Preprocess, pg.OneShot ? 0 : Math.Min(pg.Lifetime, 8))] : [],
+                Region = region, Margin = margin, Patch = patchMargins,
+                Text = text, Font = fontPath, FontSize = Math.Clamp(fontSize, 1, 180), Align = align, Z = Math.Clamp(z, -4096, 4096) * 16384 + order++,
+                AncientBanner = ancientEffect == null ? [] : [ancientEffect.Rotation, ancientEffect.Spacing, ancientEffect.CenterCharacter],
+                BoldFont = node is RichTextLabel richBold ? FontPath(richBold.GetThemeFont("bold_font")) : "",
+                ItalicFont = node is RichTextLabel richItalic ? FontPath(richItalic.GetThemeFont("italics_font")) : "",
+                BoldItalicFont = node is RichTextLabel richBoth ? FontPath(richBoth.GetThemeFont("bold_italics_font")) : "",
+                FlipH = node is Sprite2D { FlipH: true } or TextureRect { FlipH: true } or AnimatedSprite2D { FlipH: true },
+                FlipV = node is Sprite2D { FlipV: true } or TextureRect { FlipV: true } or AnimatedSprite2D { FlipV: true },
                 VerticalAlign = vertical, Wrap = wrap, OutlineSize = Math.Clamp(outlineSize, 0, 64),
+                LineSeparation = node is RichTextLabel rt ? rt.GetThemeConstant("line_separation")
+                    : node is Label lt ? lt.LabelSettings?.LineSpacing is float spacing ? (int)spacing : lt.GetThemeConstant("line_spacing") : 0,
+                ParagraphSeparation = node is RichTextLabel rp ? rp.GetThemeConstant("paragraph_separation") : 0,
                 OutlineColor = [outlineColor.R, outlineColor.G, outlineColor.B, outlineColor.A],
-                Stretch = node is TextureRect textureRect ? (int)textureRect.StretchMode : 0,
+                ShadowColor = [shadowColor.R, shadowColor.G, shadowColor.B, shadowColor.A], Shadow = shadow,
+                Stretch = node.IsClass("TextureRect") ? node.Get("stretch_mode").AsInt32() : 0,
                 Clip = clipRect is { } clip ? [clip.Position.X, clip.Position.Y, clip.Size.X, clip.Size.Y] : [],
+                AlphaMasks = alphaMasks,
                 Shader = shaderPath, Uniforms = uniforms, UniformKinds = uniformKinds, UniformTextures = uniformTextures };
             if (predictionItem != null && cells.Any(c => c.Item == predictionItem && c.IsHidden))
             {
@@ -330,9 +551,27 @@ public partial class DemoVisualProjection : Control
                 }
             }
             else visuals.Add(visual);
-            if (visuals.Count >= DemoVisualCodec.MaxVisuals) break;
+            if (visuals.Count >= DemoVisualCodec.MaxVisuals) throw new InvalidDataException("Screen exceeds visual budget.");
         }
         return visuals;
+    }
+    private static IEnumerable<Node> DrawOrder(Node node)
+    {
+        var children = node.GetChildren();
+        // Godot renders behind-parent children first (e.g. the dark relic outline).
+        // Plain tree traversal incorrectly paints that outline over its icon.
+        foreach (var child in children.Where(c => c is CanvasItem { ShowBehindParent: true }))
+            foreach (var descendant in DrawOrder(child)) yield return descendant;
+        yield return node;
+        foreach (var child in children.Where(c => c is not CanvasItem { ShowBehindParent: true }))
+            foreach (var descendant in DrawOrder(child)) yield return descendant;
+    }
+    private static Variant SpineCall(GodotObject receiver, string method, params Variant[] args)
+    {
+        // Spine creates sole-owned RefCounted wrappers. Root them through the
+        // native call, matching the game's MegaSpineBinding lifetime contract.
+        try { return receiver.Call(method, args); }
+        finally { GC.KeepAlive(receiver); GC.KeepAlive(args); }
     }
     private static string FontPath(Font? font)
     {
@@ -345,9 +584,30 @@ public partial class DemoVisualProjection : Control
         }
         return "";
     }
-    public static bool Same(DemoVisual a, DemoVisual b) => a.Kind == b.Kind && a.Asset == b.Asset && a.Text == b.Text
+    private static Dictionary<string, string> CaptureSpineMaterials(Node node)
+    {
+        var result = new Dictionary<string, string>();
+        foreach (string key in new[] { "normal_material", "additive_material", "multiply_material", "screen_material" })
+            if (node.Get(key).AsGodotObject() is Material material && material.ResourcePath != "" && DemoVisualCodec.SafeAsset(material.ResourcePath))
+                result[key] = material.ResourcePath;
+        return result;
+    }
+    public static bool Same(DemoVisual a, DemoVisual b) => a.Kind == b.Kind && a.Asset == b.Asset && a.Animation == b.Animation && a.Text == b.Text
+        && a.SpinePlayback.SequenceEqual(b.SpinePlayback)
+        && a.ParticleMaterial == b.ParticleMaterial && a.Particles.SequenceEqual(b.Particles)
+        && a.AncientBanner.SequenceEqual(b.AncientBanner)
+        && a.Skin == b.Skin && a.HiddenBones.SequenceEqual(b.HiddenBones)
+        && a.SpineMaterials.Count == b.SpineMaterials.Count && a.SpineMaterials.All(p => b.SpineMaterials.TryGetValue(p.Key, out var path) && path == p.Value)
+        && a.SpineSlots.Count == b.SpineSlots.Count && a.SpineSlots.All(p => b.SpineSlots.TryGetValue(p.Key, out var slot)
+            && p.Value.Count == slot.Count && p.Value.All(m => slot.TryGetValue(m.Key, out var path) && path == m.Value))
         && a.Font == b.Font && a.FontSize == b.FontSize && a.Align == b.Align && a.Z == b.Z && a.Stretch == b.Stretch
+        && a.BoldFont == b.BoldFont && a.ItalicFont == b.ItalicFont && a.BoldItalicFont == b.BoldItalicFont && a.FlipH == b.FlipH && a.FlipV == b.FlipV
         && a.VerticalAlign == b.VerticalAlign && a.Wrap == b.Wrap && a.OutlineSize == b.OutlineSize && a.OutlineColor.SequenceEqual(b.OutlineColor)
+        && a.Shadow.SequenceEqual(b.Shadow) && a.ShadowColor.SequenceEqual(b.ShadowColor)
+        && a.AlphaMasks.Count == b.AlphaMasks.Count && a.AlphaMasks.Zip(b.AlphaMasks).All(m => m.First.Asset == m.Second.Asset
+            && m.First.Stretch == m.Second.Stretch && m.First.Patch.SequenceEqual(m.Second.Patch)
+            && m.First.Transform.SequenceEqual(m.Second.Transform) && m.First.Size.SequenceEqual(m.Second.Size))
+        && a.LineSeparation == b.LineSeparation && a.ParagraphSeparation == b.ParagraphSeparation
         && a.Transform.SequenceEqual(b.Transform) && a.Size.SequenceEqual(b.Size) && a.Tint.SequenceEqual(b.Tint)
         && a.Region.SequenceEqual(b.Region) && a.Margin.SequenceEqual(b.Margin) && a.Patch.SequenceEqual(b.Patch)
         && a.Clip.SequenceEqual(b.Clip)

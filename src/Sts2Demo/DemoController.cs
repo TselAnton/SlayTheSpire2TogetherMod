@@ -131,6 +131,12 @@ public partial class DemoController : Control
             }
             if (!_session.Active) return;
             var target = Target;
+            if (target != null && RewardDemoController.Current?.RemoteScreenUnavailable(target.NetId) == true)
+            { ExitDemo(); return; }
+            if (target != null && DemoSettings.AllActivities && RewardDemoController.Current?.CanObserveActivity(target.NetId) == true)
+            {
+                var next = target.NetId; ExitDemo(); RewardDemoController.Current.Enter(next); return;
+            }
             if (!CombatManager.Instance.IsInProgress)
             {
                 var nextTarget = _session.Target;
@@ -193,10 +199,12 @@ public partial class DemoController : Control
     private bool TryEnterDemo(ulong id)
     {
         var player = RunManager.Instance.DebugOnlyGetState()?.GetPlayer(id);
-        if (player?.PlayerCombatState == null || _net == null || _failed) return false;
+        if (player?.PlayerCombatState == null || _net == null || _failed || RewardDemoController.Current?.RemoteScreenUnavailable(id) == true) return false;
         if (!_session.TryEnter(_net.NetId, id, IsConnected(id), CombatManager.Instance.IsInProgress,
             Ui.Hand.InCardPlay || Ui.Hand.IsInCardSelection || NModalContainer.Instance?.OpenModal != null
             || NRun.Instance?.GlobalUi.Overlays.ScreenCount > 0)) return false;
+        RewardDemoController.Current?.Exit();
+        DemoTopBar.BeginObservation();
         _transition?.Kill();
         RestoreReturnAnimation();
         ClearCards();
@@ -223,10 +231,6 @@ public partial class DemoController : Control
             if (owner?.NetId != id) continue;
             if (!_ghosted.ContainsKey(indicator)) _ghosted[indicator] = indicator.Modulate;
             indicator.Modulate = Colors.Transparent;
-        }
-        if (NRun.Instance != null)
-        {
-            HideLocal(NRun.Instance.GlobalUi.RelicInventory);
         }
         _inventoryKey = "";
         _demo.Visible = true;
@@ -399,15 +403,6 @@ public partial class DemoController : Control
         _inventoryKey = key;
         foreach (var child in _relics.GetChildren()) { _relics.RemoveChild(child); child.QueueFree(); }
         foreach (var child in _powers.GetChildren()) { _powers.RemoveChild(child); child.QueueFree(); }
-        foreach (var relic in player.Relics)
-        {
-            var box = new HBoxContainer { MouseFilter = MouseFilterEnum.Stop };
-            var icon = DemoUi.Icon(relic.Icon, new(44, 44));
-            box.TooltipText = DemoUi.Plain(relic.Title.GetFormattedText() + "\n" + relic.DynamicDescription.GetFormattedText());
-            box.AddChild(icon);
-            if (relic.ShowCounter) box.AddChild(DemoUi.Label(relic.DisplayAmount.ToString(), 20));
-            _relics.AddChild(box);
-        }
         foreach (var power in player.Creature.Powers)
         {
             var box = new HBoxContainer { MouseFilter = MouseFilterEnum.Stop };
@@ -476,13 +471,14 @@ public partial class DemoController : Control
             Round = CombatManager.Instance.DebugOnlyGetState()?.RoundNumber ?? 0,
             Suspended = suspended, ReferenceSize = Ui.Size, Cards = cards,
             ArrowVisible = arrowVisible, ArrowFrom = arrowFrom, ArrowTo = arrowTo, ArrowTintRG = new(arrowTint.R, arrowTint.G), ArrowTintBA = new(arrowTint.B, arrowTint.A),
+            Targeting = suspended ? default : DemoTargeting.Capture(this),
         });
     }
 
     private void SendPresence()
     {
         var run = RunManager.Instance.DebugOnlyGetState();
-        if (_net?.IsConnected != true || run == null || run.Players.Count < 2
+        if (_net?.IsConnected != true || run == null || run.Players.Count < 2 || RewardDemoController.IsViewing
             || !CombatManager.Instance.IsInProgress) return;
         _net.SendMessage(new DemoPresenceMessage
         {
@@ -529,9 +525,10 @@ public partial class DemoController : Control
         if (!_arrow.Visible) return;
         var message = frame!.Message;
         _arrow.Modulate = new(message.ArrowTintRG.X, message.ArrowTintRG.Y, message.ArrowTintBA.X, message.ArrowTintBA.Y);
-        if (_lastArrowFrom == message.ArrowFrom && _lastArrowTo == message.ArrowTo && _lastArrowSize == Ui.Size) return;
-        _lastArrowFrom = message.ArrowFrom; _lastArrowTo = message.ArrowTo; _lastArrowSize = Ui.Size;
-        var poses = DemoArrowLayout.Build(message.ArrowFrom * Ui.Size, message.ArrowTo * Ui.Size, Ui.Size);
+        var destination = message.Targeting.Visible ? DemoTargeting.Resolve(message.Targeting, this) / Ui.Size : message.ArrowTo;
+        if (_lastArrowFrom == message.ArrowFrom && _lastArrowTo == destination && _lastArrowSize == Ui.Size) return;
+        _lastArrowFrom = message.ArrowFrom; _lastArrowTo = destination; _lastArrowSize = Ui.Size;
+        var poses = DemoArrowLayout.Build(message.ArrowFrom * Ui.Size, destination * Ui.Size, Ui.Size);
         for (int i = 0; i < 20; i++)
         {
             var pose = poses[i];

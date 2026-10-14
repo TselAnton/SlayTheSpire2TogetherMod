@@ -1,5 +1,8 @@
-param([string]$GameDir = $env:STS2_GAME_DIR, [switch]$StopOnly, [string]$CandidateDll)
+param([string]$GameDir = $env:STS2_GAME_DIR, [switch]$StopOnly, [string]$CandidateDll, [string]$UmPath, [switch]$Fast, [switch]$UiOnly, [switch]$StressOnly)
 $ErrorActionPreference = 'Stop'
+if (-not $UmPath) { $UmPath = (Get-Command um -ErrorAction SilentlyContinue).Source }
+if (-not $UmPath) { $UmPath = Join-Path $env:USERPROFILE '.local/bin/um.exe' }
+if (-not (Test-Path -LiteralPath $UmPath)) { throw 'Pass -UmPath with universal-modder executable.' }
 $repoDir = Split-Path -Parent $PSScriptRoot
 if (-not $GameDir) { throw 'Set STS2_GAME_DIR or pass -GameDir with your game installation path.' }
 $labDir = Join-Path $repoDir 'artifacts/lab'
@@ -30,7 +33,20 @@ if ($CandidateDll) {
 Copy-Item -LiteralPath $modDll, "$repoDir/src/Sts2Demo/Sts2Demo.json" -Destination "$labDir/mods/Sts2Demo"
 Get-FileHash -LiteralPath "$labDir/mods/Sts2Demo/Sts2Demo.dll" -Algorithm SHA256
 Copy-Item -LiteralPath "$repoDir/tests/Sts2Demo.Lab/.godot/mono/temp/bin/Release/Sts2DemoLab.dll", "$repoDir/tests/Sts2Demo.Lab/Sts2DemoLab.json" -Destination "$labDir/mods/Sts2DemoLab"
-$auditDir = Join-Path $repoDir 'artifacts/combat-rewards-only-1.2.2'
+$auditDir = Join-Path $repoDir 'artifacts/validation-1.3.0'
 New-Item -ItemType Directory -Path $auditDir -Force | Out-Null
-& uvx --from universal-modder um win launch $labExe -- --script "$labDir/isolate.gd" --force-steam off --rendering-method gl_compatibility --windowed --resolution 1280x720 --log-file "$auditDir/lab-current.log"
+$logName = if ($StressOnly) { 'lab-stress.log' } else { 'lab-current.log' }
+$manifestName = if ($StressOnly) { 'stress-run.json' } else { 'run.json' }
+$previousLog = Join-Path $auditDir $logName
+if (Test-Path -LiteralPath $previousLog) {
+    $stamp = (Get-Item -LiteralPath $previousLog).LastWriteTimeUtc.ToString('yyyyMMdd-HHmmss')
+    Copy-Item -LiteralPath $previousLog -Destination (Join-Path $auditDir "lab-run-$stamp.log")
+}
+@{ started_unix = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds();
+   dll_sha256 = (Get-FileHash -LiteralPath "$labDir/mods/Sts2Demo/Sts2Demo.dll" -Algorithm SHA256).Hash;
+   fast = [bool]$Fast; ui_only = [bool]$UiOnly; stress = [bool]$StressOnly } | ConvertTo-Json | Set-Content (Join-Path $auditDir $manifestName) -Encoding utf8
+$fastMode = if ($Fast) { 'on' } else { 'off' }
+$uiMode = if ($UiOnly) { 'on' } else { 'off' }
+$stressMode = if ($StressOnly) { 'on' } else { 'off' }
+& $UmPath win launch $labExe -- --script "$labDir/isolate.gd" --force-steam off --demo-fast $fastMode --demo-ui-only $uiMode --demo-stress $stressMode --rendering-method gl_compatibility --windowed --resolution 1280x720 --log-file "$auditDir/$logName"
 if ($LASTEXITCODE -ne 0) { throw 'Lab launch failed.' }

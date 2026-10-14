@@ -10,6 +10,7 @@ using MegaCrit.Sts2.Core.Nodes.Screens.Capstones;
 using MegaCrit.Sts2.Core.Nodes.Screens.Overlays;
 using MegaCrit.Sts2.Core.Runs;
 using Sts2Demo;
+using Sts2Demo.Core;
 using Sts2Demo.Networking;
 using MegaCrit.Sts2.Core.Nodes.CommonUi;
 using MegaCrit.Sts2.Core.Rooms;
@@ -20,6 +21,51 @@ namespace Sts2DemoLab;
 // Native source UI + production wire encoder/decoder, in the isolated lab only.
 public partial class LabOracle
 {
+    private async Task AuditSettings()
+    {
+        RewardDemoController.Current!.Exit();
+        var settings = (MegaCrit.Sts2.Core.Nodes.Screens.Settings.NSettingsScreen)NRun.Instance!.GlobalUi.SubmenuStack.ShowScreen(CapstoneSubmenuType.Settings);
+        var manager = settings.GetNode<MegaCrit.Sts2.Core.Nodes.Screens.Settings.NSettingsTabManager>("%SettingsTabManager");
+        await Capture("settings-native-general");
+        manager.GetNode<MegaCrit.Sts2.Core.Nodes.Screens.Settings.NSettingsTab>("FriendView").ForceTabPressed();
+        await Capture("settings");
+        var toggles = Descendants<NTickbox>(settings).Where(t => t.Name == "Toggle").ToList();
+        if (toggles.Count != 2) throw new Exception("Missing mod settings controls");
+        var layout = Descendants<Control>(settings).Where(c => c.GetPath().ToString().Contains("FriendViewSettings") || c.GetPath().ToString().Contains("ShowMpDrawings"))
+            .Select(c => new { Path = c.GetPath().ToString(), Type = c.GetClass().ToString(), Rect = c.GetGlobalRect().ToString(), Local = c.Position.ToString(),
+                H = c.SizeFlagsHorizontal.ToString(), V = c.SizeFlagsVertical.ToString(), A = new[] { c.AnchorLeft, c.AnchorRight }, O = new[] { c.OffsetLeft, c.OffsetRight } });
+        System.IO.File.WriteAllText(System.IO.Path.Combine(System.IO.Path.GetDirectoryName(OS.GetExecutablePath())!, "../validation-1.3.0/settings-layout.json"), System.Text.Json.JsonSerializer.Serialize(layout));
+        foreach (var toggle in toggles)
+        {
+            var row = toggle.GetParent<Control>();
+            var label = Descendants<RichTextLabel>(row).First();
+            if (label.GetGlobalRect().Position.X >= toggle.GetGlobalRect().GetCenter().X)
+                throw new Exception("Setting caption overlaps the right-hand toggle");
+        }
+        toggles[0].EmitSignal(Control.SignalName.MouseEntered);
+        await Capture("settings-tooltip");
+        toggles[0].EmitSignal(Control.SignalName.MouseExited);
+        string language = MegaCrit.Sts2.Core.Localization.LocManager.Instance.Language;
+        try
+        {
+            MegaCrit.Sts2.Core.Localization.LocManager.Instance.SetLanguage("eng");
+            await Capture("settings-english");
+            toggles[1].EmitSignal(Control.SignalName.MouseEntered);
+            await Capture("settings-english-tooltip");
+            toggles[1].EmitSignal(Control.SignalName.MouseExited);
+        }
+        finally { MegaCrit.Sts2.Core.Localization.LocManager.Instance.SetLanguage(language); }
+        foreach (var toggle in toggles) HarmonyLib.AccessTools.Method(typeof(NTickbox), "OnRelease").Invoke(toggle, null);
+        Sts2Demo.Core.DemoSettings.Load();
+        if (Sts2Demo.Core.DemoSettings.SeparateButton || Sts2Demo.Core.DemoSettings.AllActivities)
+            throw new Exception("Mod setting persistence mismatch");
+        await Capture("settings-player-combat");
+        Sts2Demo.Core.DemoSettings.SeparateButton = true; Sts2Demo.Core.DemoSettings.AllActivities = true;
+        Sts2Demo.Core.DemoSettings.Save();
+        NCapstoneContainer.Instance!.Close();
+        Log.Info("[DemoLab] PASS: native settings tab, two options, persistence and restoration.");
+    }
+
     private async Task AuditHeaderUtilities()
     {
         var bar = NRun.Instance!.GlobalUi.TopBar;
@@ -47,6 +93,66 @@ public partial class LabOracle
         RewardDemoController.Current!.Exit();
         await ToSignal(GetTree().CreateTimer(.8), SceneTreeTimer.SignalName.Timeout);
         var published = await CapturePublishedFrame();
+        var nativeState = DemoVisualCodec.Decode(published.Data);
+        if (name == "inspect-upgraded" && !nativeState.Items.Any(v => v.Id.Contains("HoverTip")))
+            throw new Exception("Native inspector keyword tooltip missing from published state");
+        if (name == "inspect-relic" && !nativeState.Items.Any(v => v.AlphaMasks.Count > 0))
+            throw new Exception("Native relic inspector alpha mask missing from published state");
+        if (name.StartsWith("predictions", StringComparison.Ordinal))
+        {
+            bool visibleItem = nativeState.Items.Any(v => v.Id.Contains("/Items/") && v.Kind == 0);
+            if (visibleItem != (name != "predictions")) throw new Exception("Prediction item visibility does not match revealed cells");
+            if (name == "predictions-partial" && nativeState.Items.Where(v => v.Id.Contains("/Items/") && v.Kind == 0).Any(v => v.Clip.Length != 4))
+                throw new Exception("Partially revealed item lost cell clipping");
+        }
+        if (name == "treasure" && nativeState.Items.Where(v => v.Kind == 6).Any(v => v.SpinePlayback.Length != 3 || v.SpinePlayback[1] != 0))
+            throw new Exception("Closed chest animation lost native pause");
+        System.IO.File.WriteAllText(System.IO.Path.Combine(System.IO.Path.GetDirectoryName(OS.GetExecutablePath())!, "../validation-1.3.0/visuals-" + name + ".json"),
+            System.Text.Json.JsonSerializer.Serialize(DemoVisualCodec.Decode(published.Data)));
+        if (name is "merchant-inventory" or "choose-relic")
+        {
+            var relicNodes = Descendants<MegaCrit.Sts2.Core.Nodes.Relics.NRelic>(NRun.Instance!).Where(n => n.IsVisibleInTree())
+                .SelectMany(n => new Node[] { n }.Concat(Descendants<Node>(n))).OfType<CanvasItem>()
+                .Select(n => new { Path = n.GetPath().ToString(), n.ShowBehindParent, n.ZIndex, n.ZAsRelative,
+                    Tint = n.Modulate.ToString(), SelfTint = n.SelfModulate.ToString(), n.UseParentMaterial,
+                    Shader = (n.Material as ShaderMaterial)?.Shader?.Code });
+            System.IO.File.WriteAllText(System.IO.Path.Combine(System.IO.Path.GetDirectoryName(OS.GetExecutablePath())!, "../validation-1.3.0/relic-draw-" + name + ".json"),
+                System.Text.Json.JsonSerializer.Serialize(relicNodes));
+        }
+        if (name == "predictions")
+        {
+            System.IO.File.WriteAllText(System.IO.Path.Combine(System.IO.Path.GetDirectoryName(OS.GetExecutablePath())!, "../validation-1.3.0/prediction-visuals.json"),
+                System.Text.Json.JsonSerializer.Serialize(DemoVisualCodec.Decode(published.Data).Items.Where(v => v.Id.Contains("DivinationButton"))));
+            var nodes = Descendants<Node>(NRun.Instance!).Where(n => n.GetPath().ToString().Contains("DivinationButton"))
+                .Select(n => new { Path = n.GetPath().ToString(), Type = n.GetClass().ToString(),
+                    Size = (n as Control)?.Size.ToString(), Scale = (n as Control)?.Scale.ToString(),
+                    Texture = n is TextureRect t ? t.Texture?.ResourcePath : null,
+                    Properties = n.GetPropertyList().Select(p => p["name"].AsString()).Where(p => p.Contains("texture") || p.Contains("stretch") || p.Contains("frame") || p.Contains("region"))
+                        .ToDictionary(p => p, p => n.Get(p).ToString()) });
+            System.IO.File.WriteAllText(System.IO.Path.Combine(System.IO.Path.GetDirectoryName(OS.GetExecutablePath())!, "../validation-1.3.0/prediction-nodes.json"), System.Text.Json.JsonSerializer.Serialize(nodes));
+        }
+        var elapsed = new List<double>();
+        for (int sample = 0; sample < 5; sample++)
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            Sts2Demo.Ui.DemoVisualProjection.CaptureActivity((Node)MegaCrit.Sts2.Core.Nodes.Screens.ScreenContext.ActiveScreenContext.Instance.GetCurrentScreen()!);
+            elapsed.Add(stopwatch.Elapsed.TotalMilliseconds);
+        }
+        Log.Info($"[DemoLab] CAPTURE COST {name}: mean={elapsed.Average():F2}ms max={elapsed.Max():F2}ms (5 samples, metadata only).");
+        var banners = Descendants<NCommonBanner>(NGame.Instance!).Where(b => b.IsVisibleInTree()).SelectMany(b => new Node[] { b }.Concat(Descendants<Node>(b)))
+            .Select(n => new { Path = n.GetPath().ToString(), Type = n.GetClass().ToString(), Z = (n as CanvasItem)?.ZIndex,
+                Tint = (n as CanvasItem)?.Modulate.ToString(), Self = (n as CanvasItem)?.SelfModulate.ToString(),
+                Font = n is Label l ? l.GetThemeFontSize("font_size") : 0, Material = (n as CanvasItem)?.Material?.ResourcePath,
+                Size = (n as Control)?.Size.ToString(), Texture = (n as TextureRect)?.Texture?.ResourcePath,
+                TextureType = (n as TextureRect)?.Texture?.GetClass().ToString() });
+        System.IO.File.WriteAllText(System.IO.Path.Combine(System.IO.Path.GetDirectoryName(OS.GetExecutablePath())!, "../validation-1.3.0/banner-" + name + ".json"),
+            System.Text.Json.JsonSerializer.Serialize(banners));
+        var diagnostics = Descendants<Node>(NRun.Instance!).Where(n => n.GetClass().ToString().StartsWith("Spine"))
+            .Select(n => new { Path = n.GetPath().ToString(), Asset = n.GetClass() == "SpineSprite" ? (n.Get("skeleton_data_res").AsGodotObject() as Resource)?.ResourcePath : null,
+                Properties = n.GetPropertyList().Select(p => p["name"].AsString()).Where(p => p.Contains("material") || p.Contains("slot"))
+                    .ToDictionary(p => p, p => n.Get(p).VariantType == Variant.Type.Object ? (n.Get(p).AsGodotObject() as Resource)?.ResourcePath : n.Get(p).ToString()) }).ToArray();
+        System.IO.File.WriteAllText(System.IO.Path.Combine(System.IO.Path.GetDirectoryName(OS.GetExecutablePath())!, "../validation-1.3.0/spine-" + name + ".json"),
+            System.Text.Json.JsonSerializer.Serialize(diagnostics));
         await Capture(name + "-source");
         InjectActivity();
         if (!RewardDemoController.Current.Enter(2)) throw new Exception("Audit entry refused: " + name);
@@ -72,6 +178,7 @@ public partial class LabOracle
     {
         var cards = _localCards;
         var previewCards = Players[0].Deck.Cards.Where(c => c.IsUpgradable).Take(3).ToList();
+        await AuditRewardOwnership();
         await AuditRewardCards();
         async Task Overlay(string name, Func<Node?> create)
         {
@@ -138,11 +245,44 @@ public partial class LabOracle
         }
         catch (Exception e) { Log.Error("[DemoLab] VISUAL AUDIT FAILED inspect: " + e); }
         finally { NGame.Instance!.GetInspectCardScreen().Close(); }
+        try
+        {
+            var relics = Players[0].Relics.ToList();
+            NGame.Instance!.GetInspectRelicScreen().Open(relics, relics[0]);
+            await AuditActivity("inspect-relic");
+        }
+        catch (Exception e) { Log.Error("[DemoLab] VISUAL AUDIT FAILED inspect-relic: " + e); }
+        finally { NGame.Instance!.GetInspectRelicScreen().Close(); }
         await RunManager.Instance.EnterRoomDebug(RoomType.Event,
             model: ModelDb.Event<MegaCrit.Sts2.Core.Models.Events.FakeMerchant>(), showTransition: false);
-        await AuditBlocked("blocked-fake-merchant");
+        await AuditActivity("fake-merchant");
         Descendants<MegaCrit.Sts2.Core.Nodes.Events.Custom.NFakeMerchant>(NRun.Instance!).Single().Inventory.Open();
-        await AuditBlocked("blocked-fake-merchant-inventory");
+        await AuditActivity("fake-merchant-inventory");
+    }
+
+    private async Task AuditRewardOwnership()
+    {
+        var controller = RewardDemoController.Current!;
+        controller.Exit();
+        var local = NCardRewardSelectionScreen.ShowScreen(_localCards.Select(c => new CardCreationResult(c)).ToList(), []);
+        await Capture("reward-owner-local");
+        foreach (ulong id in new ulong[] { 2, 3, 2 })
+        {
+            var expected = id == 2 ? _rewardCards : _thirdRewardCards;
+            Net.Inject(new DemoRewardMessage { ProtocolVersion = DemoRewardMessage.Protocol, Sequence = ++_sequence,
+                Location = RunManager.Instance.DebugOnlyGetState()!.RunLocation, Kind = DemoRewardKind.CardChoice,
+                Cards = expected, Labels = [], Entries = [], Hovered = -1, Chosen = -1 }, id);
+            if (!controller.Enter(id)) throw new Exception("Ownership test entry refused");
+            await ToSignal(GetTree().CreateTimer(.25), SceneTreeTimer.SignalName.Timeout);
+            var models = Descendants<MegaCrit.Sts2.Core.Nodes.Cards.NCard>(controller.GetNode("ReadOnlyRewards")).Select(c => c.Model).ToList();
+            bool match = models.Count == expected.Count && models.Select(c => c!.Id).SequenceEqual(expected.Select(c => c.Id))
+                && models.All(c => c!.Owner.NetId == id) && !models.Select(c => c!.Id).SequenceEqual(_localCards.Select(c => c.Id));
+            if (!match) throw new Exception("Reward ownership mismatch: " + id);
+            Log.Info("[DemoLab] PASS: reward options and owners match sender " + id + "; differ from observer; no stale cards after switch.");
+            await Capture("reward-owner-" + id);
+        }
+        controller.Exit();
+        if (local != null) NOverlayStack.Instance!.Remove(local);
     }
 
     private async Task AuditRewardCards()
@@ -153,7 +293,7 @@ public partial class LabOracle
             await ToSignal(GetTree().CreateTimer(1), SceneTreeTimer.SignalName.Timeout);
             Net.PublishedRewards.Clear();
             Net.Inject(new DemoPresenceMessage { ProtocolVersion = 1, Sequence = ++_sequence,
-                Location = RunManager.Instance.DebugOnlyGetState()!.RunLocation, Watching = true, TargetId = 1 }, 2);
+                Location = RunManager.Instance.DebugOnlyGetState()!.RunLocation, Watching = true, RequestSnapshot = true, TargetId = 1 }, 2);
             await ToSignal(GetTree().CreateTimer(1.2), SceneTreeTimer.SignalName.Timeout);
             var frame = Net.PublishedRewards.Last(m => m.Kind == DemoRewardKind.CardChoice && !m.Delta && m.Cards!.Count == 3);
             await Capture("audit-reward-cards-source");

@@ -80,6 +80,7 @@ static class StartLab
     {
         try
         {
+            DemoSettings.SeparateButton = true; DemoSettings.AllActivities = true;
             var game = NGame.Instance!;
             ProfileOracle.Run();
             await game.ToSignal(game.GetTree().CreateTimer(1), SceneTreeTimer.SignalName.Timeout);
@@ -138,6 +139,38 @@ public partial class LabOracle : Node
     private Vector2 _rewardOrigin;
     private Vector2 _rewardSize = Vector2.One;
     private MegaCrit.Sts2.Core.Nodes.Combat.NTargetingArrow? _referenceArrow;
+    public override void _Ready()
+    {
+        if (CommandLineHelper.GetValue("demo-stress") == "on")
+        { _phase = 99; TaskHelper.RunSafely(StressProjection()); return; }
+        if (CommandLineHelper.GetValue("demo-ui-only") == "on")
+        { _phase = 99; TaskHelper.RunSafely(FocusUiAudit()); return; }
+        if (CommandLineHelper.GetValue("demo-fast") == "on")
+        { _phase = 99; TaskHelper.RunSafely(QuickAudit()); }
+    }
+    private async Task FocusUiAudit()
+    {
+        await ToSignal(GetTree().CreateTimer(2), SceneTreeTimer.SignalName.Timeout);
+        await FinishForRewards();
+        await AuditSettings();
+        await RunManager.Instance.EnterRoomDebug(RoomType.Event, model: ModelDb.Event<MegaCrit.Sts2.Core.Models.Events.CrystalSphere>(), showTransition: false);
+        await AuditActivity("event-dialogue");
+        var entity = new MegaCrit.Sts2.Core.Events.Custom.CrystalSphereEvent.CrystalSphereMinigame(Players[0], new MegaCrit.Sts2.Core.Random.Rng(42), 3);
+        var screen = MegaCrit.Sts2.Core.Nodes.Events.Custom.CrystalSphere.NCrystalSphereScreen.ShowScreen(entity);
+        await AuditActivity("predictions");
+        NOverlayStack.Instance!.Remove(screen); entity.ForceMinigameEnd();
+        await RunManager.Instance.EnterRoomDebug(RoomType.Event, model: ModelDb.Event<MegaCrit.Sts2.Core.Models.Events.Neow>(), showTransition: false);
+        await AuditActivity("ancient-event");
+        Log.Info("[DemoLab] UI AUDIT FINISHED.");
+    }
+    private async Task QuickAudit()
+    {
+        await ToSignal(GetTree().CreateTimer(2), SceneTreeTimer.SignalName.Timeout);
+        await AuditPotionsAndRestore();
+        await AuditCombatActivity();
+        await FinishForRewards();
+        await TestNativeActivities();
+    }
     public override void _Process(double delta)
     {
         if (_phase < 5 && (DemoController.Current == null || Players[1].PlayerCombatState?.Hand.Cards.Count == 0)) return;
@@ -283,11 +316,11 @@ public partial class LabOracle : Node
             int buttons = Descendants<BaseButton>(view).Count(b => b.Visible);
             int avatars = Descendants<TextureButton>(RewardDemoController.Current).Count(b => b.Name.ToString().StartsWith("AvatarDemoEye_") && b.Visible);
             bool checkbox = Descendants<MegaCrit.Sts2.Core.Nodes.CommonUi.NTickbox>(view).Any(t => t.Name == "DemoViewUpgrades");
-            if (cards == 3 && labels == 0 && buttons == 1 && avatars == 0 && checkbox)
-                Log.Info("[DemoLab] PASS: reward demo contains three cards, native upgrade tickbox and one exit eye; no Skip or duplicate avatar eyes.");
+            if (cards == 3 && labels == 0 && buttons == 0 && avatars == 2 && checkbox)
+                Log.Info("[DemoLab] PASS: reward demo contains three cards, native upgrade tickbox and grouped table eyes; no Skip or floating exit eye.");
             else Log.Error($"[DemoLab] FAIL: reward UI cards={cards} labels={labels} buttons={buttons} avatars={avatars}.");
             _cardChoiceVerified = true;
-            TaskHelper.RunSafely(TestEyeHitbox(Descendants<TextureButton>(view).Single(), "right-of-cards"));
+            TaskHelper.RunSafely(TestEyeHitbox(RewardDemoController.Current.GetNode<TextureButton>("AvatarDemoEye_2"), "reward-table"));
             var tick = Descendants<MegaCrit.Sts2.Core.Nodes.CommonUi.NTickbox>(view).Single();
             tick.IsTicked = true; tick.EmitSignal(MegaCrit.Sts2.Core.Nodes.CommonUi.NTickbox.SignalName.Toggled, tick);
             bool upgraded = Descendants<NCard>(view).All(c => c.Model!.IsUpgraded || !c.Model.IsUpgradable);
@@ -318,7 +351,7 @@ public partial class LabOracle : Node
         }
         if (_phase == 7 && now - _rewardStarted > 7000)
         {
-            var exit = Descendants<TextureButton>(RewardDemoController.Current!.GetNode("ReadOnlyRewards")).Single();
+            var exit = RewardDemoController.Current!.GetNode<TextureButton>("AvatarDemoEye_2");
             exit.EmitSignal(BaseButton.SignalName.Pressed);
             if (!RewardDemoController.IsViewing && _localChoice!.IsInsideTree() && Players[0].Deck.Cards.Count == _deckBefore)
                 Log.Info("[DemoLab] PASS: exit eye restores original local reward screen without claiming cards.");
@@ -328,12 +361,11 @@ public partial class LabOracle : Node
         if (_phase == 7 && !_rewardSwitchVerified && now - _rewardStarted > 4500)
         {
             var controller = RewardDemoController.Current!;
-            var exit = Descendants<TextureButton>(controller.GetNode("ReadOnlyRewards")).Single();
+            var exit = controller.GetNode<TextureButton>("AvatarDemoEye_2");
             exit.EmitSignal(BaseButton.SignalName.Pressed);
             controller.GetNode<TextureButton>("AvatarDemoEye_3").EmitSignal(BaseButton.SignalName.Pressed);
             bool third = RewardDemoController.ObservedPlayerId == 3;
             bool thirdTint = SelectedAvatarTint(3) && !SelectedAvatarTint(2);
-            exit.EmitSignal(BaseButton.SignalName.Pressed);
             controller.GetNode<TextureButton>("AvatarDemoEye_2").EmitSignal(BaseButton.SignalName.Pressed);
             bool second = RewardDemoController.ObservedPlayerId == 2;
             if (third && thirdTint && second && SelectedAvatarTint(2) && !SelectedAvatarTint(3)
@@ -429,6 +461,9 @@ public partial class LabOracle : Node
 
     private async Task TestControllerCombat()
     {
+        await AuditPotionsAndRestore();
+        await AuditCombatActivity();
+        _before = Fingerprint();
         await Capture("combat-source");
         var manager = NControllerManager.Instance!;
         var strategyField = AccessTools.Field(typeof(NControllerManager), "_inputStrategy");
@@ -439,6 +474,9 @@ public partial class LabOracle : Node
         var originalMapping = new Dictionary<StringName, StringName>(mapping);
         try
         {
+            foreach (ulong peer in new ulong[] { 2, 3 })
+                Net.Inject(new DemoPresenceMessage { ProtocolVersion = 1, Sequence = ++_sequence,
+                    Location = RunManager.Instance.DebugOnlyGetState()!.RunLocation, Watching = false }, peer);
             Net.PublishedHands.Clear(); Net.PublishedScreens.Clear(); Net.PublishedRewards.Clear();
             await ToSignal(GetTree().CreateTimer(.25), SceneTreeTimer.SignalName.Timeout);
             if (Net.PublishedHands.Count == 0 && Net.PublishedScreens.Count == 0
@@ -451,20 +489,20 @@ public partial class LabOracle : Node
             var originalHandPosition = NCombatRoom.Instance!.Ui.Hand.Position;
             NCombatRoom.Instance.Ui.Hand.Position = new(123, 77);
             var friend = Descendants<NMultiplayerPlayerState>(NRun.Instance!.GlobalUi.MultiplayerPlayerContainer).Single(s => s.Player.NetId == 2);
-            friend.Hitbox.GrabFocus();
+            var eye = RewardDemoController.Current!.GetNode<TextureButton>("AvatarDemoEye_2");
+            eye.GrabFocus();
             await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
             await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame); // UI _Process runs after the frame signal.
-            var eye = RewardDemoController.Current!.GetNode<TextureButton>("AvatarDemoEye_2");
             var hint = eye.GetNode<TextureRect>("DemoControllerHint");
             ControllerCheck(hint.IsVisibleInTree() && hint.Texture == NInputManager.Instance!.GetHotkeyIcon(MegaInput.select)
-                && hint.GetGlobalRect().End.Y < eye.GetGlobalRect().Position.Y, "native A glyph ABOVE focused friend's eye");
-            if (!hint.IsVisibleInTree() || hint.GetGlobalRect().End.Y >= eye.GetGlobalRect().Position.Y)
+                && hint.GetGlobalRect().Position.X > eye.GetGlobalRect().End.X, "native A glyph RIGHT OF focused friend's eye");
+            if (!hint.IsVisibleInTree() || hint.GetGlobalRect().Position.X <= eye.GetGlobalRect().End.X)
                 Log.Info($"[DemoLab] controller glyph diagnostic: visible={hint.IsVisibleInTree()} mode={manager.IsUsingController} size={hint.Size} scale={hint.Scale} rect={hint.GetGlobalRect()} eye={eye.GetGlobalRect()}.");
             int leaked = 0; friend.Hitbox.GuiInput += e => { if (e.IsAction(MegaInput.select)) leaked++; };
             await ControllerTap(Controller.faceButtonSouth);
             ControllerCheck(DemoController.ObservedPlayerId == 2 && leaked == 0, "physical A enters once; native hitbox release not triggered");
             ControllerCheck(hint.Texture == NInputManager.Instance!.GetHotkeyIcon(MegaInput.cancel), "active eye changes to native B hint");
-            Descendants<NMultiplayerPlayerState>(NRun.Instance!.GlobalUi.MultiplayerPlayerContainer).Single(s => s.Player.NetId == 3).Hitbox.GrabFocus();
+            RewardDemoController.Current!.GetNode<TextureButton>("AvatarDemoEye_3").GrabFocus();
             await ControllerTap(Controller.faceButtonSouth);
             ControllerCheck(DemoController.ObservedPlayerId == 3, "physical A switches to third player");
             int nativeConfirm = 0;
@@ -489,7 +527,7 @@ public partial class LabOracle : Node
             ControllerCheck(!DemoController.IsViewing && NCombatRoom.Instance.Ui.Hand.Visible, "physical B exits and restores native hand");
             ControllerCheck(NCombatRoom.Instance.Ui.Hand.Position == new Vector2(123, 77), "exit preserves native hand geometry instead of moving root to zero");
             NCombatRoom.Instance.Ui.Hand.Position = originalHandPosition;
-            friend.Hitbox.GrabFocus();
+            eye.GrabFocus();
             mapping[MegaInput.select] = Controller.faceButtonWest; mapping[MegaInput.topPanel] = Controller.faceButtonSouth;
             mapping[MegaInput.cancel] = Controller.rightBumper; mapping[MegaInput.viewExhaustPileAndTabRight] = Controller.faceButtonEast;
             NInputManager.Instance!.EmitSignal(NInputManager.SignalName.InputRebound);
@@ -501,12 +539,12 @@ public partial class LabOracle : Node
             ControllerCheck(!DemoController.IsViewing, "rebound cancel exits with RB instead of B");
             // Deliberate alias: one physical button maps to both cancel and select.
             mapping[MegaInput.cancel] = Controller.faceButtonWest;
-            friend.Hitbox.GrabFocus(); await ControllerTap(Controller.faceButtonWest);
+            eye.GrabFocus(); await ControllerTap(Controller.faceButtonWest);
             ControllerCheck(DemoController.IsViewing, "aliased select still enters when cancel is inactive");
             await ControllerTap(Controller.faceButtonWest);
             ControllerCheck(!DemoController.IsViewing, "aliased cancel owns the entire press/release; no re-entry");
             mapping[MegaInput.cancel] = Controller.faceButtonEast;
-            friend.Hitbox.GrabFocus();
+            eye.GrabFocus();
             GetViewport().PushInput(new InputEventAction { Action = Controller.faceButtonWest, Pressed = true }, true);
             await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
             GetViewport().PushInput(new InputEventAction { Action = Controller.faceButtonWest, Pressed = true }, true);
@@ -518,7 +556,7 @@ public partial class LabOracle : Node
             var targetManager = NRun.Instance!.GlobalUi.TargetManager;
             targetManager.StartTargeting(MegaCrit.Sts2.Core.Entities.Cards.TargetType.AnyAlly, Vector2.Zero,
                 MegaCrit.Sts2.Core.Nodes.Combat.TargetMode.Controller, () => false, null);
-            friend.Hitbox.GrabFocus();
+            eye.GrabFocus();
             await ControllerTap(Controller.faceButtonSouth);
             ControllerCheck(!DemoController.IsViewing, "native ally targeting keeps A; no simultaneous demo entry");
             targetManager.CancelTargeting();
@@ -577,12 +615,14 @@ public partial class LabOracle : Node
             // Entry is reachable via the ORIGINAL player-list hitbox, not only the detached eye.
             var row = Descendants<NMultiplayerPlayerState>(NRun.Instance!.GlobalUi.MultiplayerPlayerContainer).Single(s => s.Player.NetId == 2);
             int released = 0; row.Hitbox.Released += _ => released++;
+            DemoSettings.SeparateButton = false;
             row.Hitbox.GrabFocus(); await ControllerTap(Controller.faceButtonSouth);
             ControllerCheck(RewardDemoController.ObservedPlayerId == 2 && released == 0, "A on native player row enters without opening original expanded state");
             await Capture("controller-rewards");
             await ControllerTap(Controller.faceButtonEast);
             ControllerCheck(GetViewport().GuiGetFocusOwner() == row.Hitbox, "B restores original player-list focus");
             ControllerCheck(Players[0].Deck.Cards.Count == _deckBefore, "reward input never claims a card");
+            DemoSettings.SeparateButton = true;
             controller.Enter(2);
         }
         catch (Exception e) { Log.Error($"[DemoLab] FAIL: controller reward fixture: {e}"); }
@@ -628,7 +668,7 @@ public partial class LabOracle : Node
             {
                 modeProperty.SetValue(manager, true);
                 await ControllerTap(Controller.faceButtonEast);
-                NCombatRoom.Instance!.GetCreatureNode(Players[1].Creature)!.Hitbox.GrabFocus();
+                RewardDemoController.Current!.GetNode<TextureButton>("AvatarDemoEye_2").GrabFocus();
                 await ControllerTap(Controller.faceButtonSouth);
                 ControllerCheck(DemoController.ObservedPlayerId == 2 && !Players[0].Creature.IsAlive,
                     "dead observer uses B then A on living friend");
@@ -641,7 +681,7 @@ public partial class LabOracle : Node
     private async Task Capture(string name)
     {
         await ToSignal(GetTree().CreateTimer(.5), SceneTreeTimer.SignalName.Timeout);
-        string directory = Path.Combine(Path.GetDirectoryName(OS.GetExecutablePath())!, "..", "combat-rewards-only-1.2.2");
+        string directory = Path.Combine(Path.GetDirectoryName(OS.GetExecutablePath())!, "..", "validation-1.3.0");
         Directory.CreateDirectory(directory);
         string path = Path.Combine(directory, $"lab-{name}.png");
         GetViewport().GetTexture().GetImage().SavePng(path);
@@ -793,55 +833,52 @@ public partial class LabOracle : Node
     {
         Net.Inject(new DemoRewardMessage { ProtocolVersion = DemoRewardMessage.Protocol, Sequence = ++_sequence,
             Location = RunManager.Instance.DebugOnlyGetState()!.RunLocation, Kind = DemoRewardKind.Activity,
+            Screen = MegaCrit.Sts2.Core.Nodes.Screens.ScreenContext.ActiveScreenContext.Instance.GetCurrentScreen()?.GetType().Name,
             Cards = [], Labels = [], Hovered = -1, Chosen = -1 }, 2);
     }
     private async Task TestNativeActivities()
     {
         try
         {
-            var controller = RewardDemoController.Current!;
-            async Task Blocked(string name)
-            {
-                Net.PublishedScreens.Clear(); Net.PublishedRewards.Clear();
-                Net.Inject(new DemoPresenceMessage { ProtocolVersion = 1, Sequence = ++_sequence,
-                    Location = RunManager.Instance.DebugOnlyGetState()!.RunLocation, Watching = true, TargetId = 1 }, 2);
-                await ToSignal(GetTree().CreateTimer(1.2), SceneTreeTimer.SignalName.Timeout);
-                Net.Inject(new DemoRewardMessage { ProtocolVersion = DemoRewardMessage.Protocol, Sequence = ++_sequence,
-                    Location = RunManager.Instance.DebugOnlyGetState()!.RunLocation, Kind = DemoRewardKind.Rewards,
-                    Cards = [], Labels = [], Entries = [], Hovered = -1, Chosen = -1 }, 2);
-                bool entered = controller.Enter(2);
-                bool eyes = Descendants<TextureButton>(controller).Any(b => b.Name.ToString().StartsWith("AvatarDemoEye_") && b.IsVisibleInTree());
-                bool clean = !RewardDemoController.IsViewing && !entered && !eyes && Net.PublishedScreens.Count == 0
-                    && Net.PublishedRewards.All(m => m.Kind == DemoRewardKind.None);
-                if (clean) Log.Info("[DemoLab] PASS: blocked " + name + "; no entry eyes or activity traffic.");
-                else Log.Error("[DemoLab] FAIL: blocked " + name + " entry=" + entered + " eyes=" + eyes);
-                await Capture("restricted-" + name);
-            }
-            // Preserve the separate reward-card hover/upgrade tests before testing denied rooms.
-            await AuditRewardCards();
-            controller.Exit();
-            if (_localChoice != null && _localChoice.IsInsideTree()) NOverlayStack.Instance!.Remove(_localChoice);
-            Net.Inject(new DemoRewardMessage { ProtocolVersion = DemoRewardMessage.Protocol, Sequence = ++_sequence,
-                Location = RunManager.Instance.DebugOnlyGetState()!.RunLocation, Kind = DemoRewardKind.Rewards,
-                Cards = [], Labels = [], Entries = [], Hovered = -1, Chosen = -1 }, 2);
-            if (!controller.Enter(2)) throw new Exception("Cannot establish reward observation before forbidden-screen transition.");
+            DemoSettings.AllActivities = true;
+            await AuditSettings();
+            await AuditCardScreens();
+            RewardDemoController.Current!.Exit();
+            await RunManager.Instance.EnterRoomDebug(RoomType.Event, model: ModelDb.Event<MegaCrit.Sts2.Core.Models.Events.CrystalSphere>(), showTransition: false);
+            await AuditActivity("event-dialogue");
+            await AuditAvailabilityAndMap();
             var entity = new MegaCrit.Sts2.Core.Events.Custom.CrystalSphereEvent.CrystalSphereMinigame(Players[0], new MegaCrit.Sts2.Core.Random.Rng(42), 3);
             var predictions = MegaCrit.Sts2.Core.Nodes.Events.Custom.CrystalSphere.NCrystalSphereScreen.ShowScreen(entity);
-            await Blocked("predictions");
+            await AuditActivity("predictions");
+            var revealCells = entity.cells.Cast<MegaCrit.Sts2.Core.Events.Custom.CrystalSphereEvent.CrystalSphereCell>()
+                .Where(c => c.Item != null).GroupBy(c => c.Item).First().ToList();
+            foreach (var reveal in revealCells.Take(Math.Max(1, revealCells.Count / 2))) reveal.IsHidden = false;
+            await AuditActivity("predictions-partial");
+            foreach (var reveal in revealCells) reveal.IsHidden = false;
+            await AuditActivity("predictions-revealed");
             NOverlayStack.Instance!.Remove(predictions); entity.ForceMinigameEnd();
-            await RunManager.Instance.EnterRoomDebug(RoomType.Event, model: ModelDb.Event<MegaCrit.Sts2.Core.Models.Events.CrystalSphere>(), showTransition: false);
-            await Blocked("event-dialogue");
             await RunManager.Instance.EnterRoomDebug(RoomType.Shop, showTransition: false);
-            await Blocked("merchant-room");
+            await AuditActivity("merchant-room");
             NRun.Instance!.MerchantRoom!.Inventory.Open();
-            await Blocked("merchant-inventory");
-            await RunManager.Instance.EnterRoomDebug(RoomType.Event, model: ModelDb.Event<MegaCrit.Sts2.Core.Models.Events.FakeMerchant>(), showTransition: false);
-            await Blocked("fake-merchant");
+            await AuditActivity("merchant-inventory");
+            await AuditShopUpdates();
             await RunManager.Instance.EnterRoomDebug(RoomType.RestSite, showTransition: false);
-            await Blocked("rest-site");
-            Log.Info("[DemoLab] 1.2.2 LAB FINISHED.");
+            await AuditActivity("rest-site");
+            await RunManager.Instance.EnterRoomDebug(RoomType.Treasure, showTransition: false);
+            await AuditActivity("treasure");
+            var treasureRoom = Descendants<NTreasureRoom>(NRun.Instance!).Single();
+            HarmonyLib.AccessTools.Method(typeof(NTreasureRoom), "OnChestButtonReleased").Invoke(treasureRoom, [null]);
+            await ToSignal(GetTree().CreateTimer(2), SceneTreeTimer.SignalName.Timeout);
+            await AuditActivity("treasure-open");
+            var relics = ModelDb.AllRelics.Take(3).Select(r => r.ToMutable()).ToList();
+            var choice = MegaCrit.Sts2.Core.Nodes.Screens.NChooseARelicSelection.ShowScreen(relics);
+            await AuditActivity("choose-relic");
+            if (choice != null) NOverlayStack.Instance!.Remove(choice);
+            await RunManager.Instance.EnterRoomDebug(RoomType.Event, model: ModelDb.Event<MegaCrit.Sts2.Core.Models.Events.Neow>(), showTransition: false);
+            await AuditActivity("ancient-event");
+            Log.Info("[DemoLab] 1.3.0 LAB FINISHED.");
         }
-        catch (Exception e) { Log.Error("[DemoLab] RESTRICTED MODES FAILED: " + e); }
+        catch (Exception e) { Log.Error("[DemoLab] ACTIVITIES FAILED: " + e); }
     }
     private async Task<(byte[] Data, Vector2 Origin, Vector2 Size)> CapturePublishedFrame()
     {
@@ -849,7 +886,8 @@ public partial class LabOracle : Node
         Net.Inject(new DemoPresenceMessage { ProtocolVersion = 1, Sequence = ++_sequence,
             Location = RunManager.Instance.DebugOnlyGetState()!.RunLocation, Watching = false, TargetId = 1 }, 2);
         Net.Inject(new DemoPresenceMessage { ProtocolVersion = 1, Sequence = ++_sequence,
-            Location = RunManager.Instance.DebugOnlyGetState()!.RunLocation, Watching = true, TargetId = 1 }, 2);
+            Location = RunManager.Instance.DebugOnlyGetState()!.RunLocation, Watching = true, TargetId = 1, RequestSnapshot = true }, 2);
+        Log.Info($"[DemoLab] Capture requested: presence={_sequence}, screen={MegaCrit.Sts2.Core.Nodes.Screens.ScreenContext.ActiveScreenContext.Instance.GetCurrentScreen()?.GetType().Name}, force={AccessTools.Field(typeof(RewardDemoController), "_forceFullMetadata").GetValue(RewardDemoController.Current)}, viewing={RewardDemoController.IsViewing}, location={RunManager.Instance.DebugOnlyGetState()!.RunLocation}.");
         await ToSignal(GetTree().CreateTimer(.8), SceneTreeTimer.SignalName.Timeout);
         if (MegaCrit.Sts2.Core.Nodes.Screens.ScreenContext.ActiveScreenContext.Instance.GetCurrentScreen() is MegaCrit.Sts2.Core.Nodes.Screens.NRewardsScreen)
         {
@@ -860,15 +898,23 @@ public partial class LabOracle : Node
             return ([], Vector2.Zero, Vector2.One);
         }
         if (Net.PublishedScreens.Count == 0) throw new Exception("Production metadata publisher did not send a state.");
+        var assembled = new DemoVisualState();
+        float[] reference = [1920, 1080];
+        int transferred = 0;
         foreach (var group in Net.PublishedScreens.GroupBy(m => m.Sequence).OrderBy(g => g.Key))
         {
             var fragments = group.OrderBy(m => m.Index).ToArray();
             if (fragments.Length != fragments[0].Count) continue;
             var bytes = fragments.SelectMany(m => m.Data!).ToArray();
             var state = DemoVisualCodec.Decode(bytes);
-            if (!state.Full) continue;
-            Log.Info($"[DemoLab] PASS: UI publisher sent {bytes.Length} bytes of metadata for {state.Items.Count} local visuals; no JPEG.");
-            return (bytes, Vector2.Zero, Vector2.One);
+            if (!assembled.Apply(state, group.Key)) throw new Exception($"Publisher emitted a broken metadata chain: sequence={group.Key}, base={state.Base}, full={state.Full}, screen={state.Screen}, previous={assembled.Sequence}/{assembled.Screen}.");
+            reference = state.Reference; transferred += bytes.Length;
+        }
+        if (assembled.Sequence != 0)
+        {
+            Log.Info($"[DemoLab] PASS: UI publisher sent {transferred} bytes of metadata for {assembled.Items.Count} local visuals; no JPEG.");
+            return (DemoVisualCodec.Encode(new DemoVisualUpdate { Full = true, Screen = assembled.Screen,
+                Reference = reference, Items = assembled.Items.Values.ToList() }), Vector2.Zero, Vector2.One);
         }
         throw new Exception("Metadata keyframe missing.");
     }

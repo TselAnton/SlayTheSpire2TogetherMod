@@ -4,6 +4,8 @@ using MegaCrit.Sts2.Core.Entities.Players;
 using MegaCrit.Sts2.Core.Nodes;
 using MegaCrit.Sts2.Core.Nodes.CommonUi;
 using MegaCrit.Sts2.Core.Nodes.Potions;
+using MegaCrit.Sts2.Core.Nodes.Relics;
+using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Nodes.Screens;
 using MegaCrit.Sts2.Core.Nodes.Screens.ScreenContext;
 using MegaCrit.Sts2.Core.Runs;
@@ -19,11 +21,16 @@ public partial class DemoTopBar : Control
     private readonly List<(Control Source, Control Copy)> _copies = [];
     private ulong? _target;
     private int _oldZ;
+    private Color _oldBarTint;
     private object? _entryScreen;
     private string _potionsKey = "";
     private Control? _potions;
     private Control? _potionSlots;
+    private Control? _relics;
+    private string _relicsKey = "";
     public static DemoTopBar? Current { get; private set; }
+    public static void BeginObservation()
+    { if (Current != null) Current._entryScreen = ActiveScreenContext.Instance.GetCurrentScreen(); }
     public static Player? ObservedPlayer => (DemoController.ObservedPlayerId ?? RewardDemoController.ObservedPlayerId) is ulong id
         ? RunManager.Instance.DebugOnlyGetState()?.GetPlayer(id) : null;
     public static bool UtilityOpen
@@ -61,11 +68,11 @@ public partial class DemoTopBar : Control
     private void Restore()
     {
         foreach (var pair in _hidden) if (GodotObject.IsInstanceValid(pair.Key)) pair.Key.Modulate = pair.Value;
-        _hidden.Clear(); _copies.Clear(); _potions = null; _potionsKey = "";
+        _hidden.Clear(); _copies.Clear(); _potions = null; _potionsKey = ""; _relics = null; _relicsKey = "";
         foreach (var child in GetChildren()) { RemoveChild(child); child.QueueFree(); }
         if (_target != null && NRun.Instance != null)
         {
-            var bar = NRun.Instance.GlobalUi.TopBar; bar.ZIndex = _oldZ;
+            var bar = NRun.Instance.GlobalUi.TopBar; bar.ZIndex = _oldZ; bar.Modulate = _oldBarTint;
             AccessTools.Method(bar.Deck.GetType(), "OnPileContentsChanged").Invoke(bar.Deck, null);
         }
         _target = null;
@@ -77,8 +84,8 @@ public partial class DemoTopBar : Control
         {
             Restore();
             if (player == null || NRun.Instance == null) return;
-            _target = player.NetId; _entryScreen = ActiveScreenContext.Instance.GetCurrentScreen();
-            var bar = NRun.Instance.GlobalUi.TopBar; _oldZ = bar.ZIndex; bar.ZIndex = 1200;
+            _target = player.NetId;
+            var bar = NRun.Instance.GlobalUi.TopBar; _oldZ = bar.ZIndex; _oldBarTint = bar.Modulate; bar.ZIndex = 1200;
             Copy(bar.Hp).Initialize(player);
             // Gold's popup is a sibling in the full top-bar scene. Copy only its
             // display nodes, without lifecycle methods that expect that sibling.
@@ -99,8 +106,28 @@ public partial class DemoTopBar : Control
             _potionSlots = _potions.GetNode<Control>("MarginContainer/PotionHolders");
             DemoUi.ReadOnly(_potions);
             _copies.Add((bar.PotionContainer, _potions)); HideOriginal(bar.PotionContainer);
+            var sourceRelics = NRun.Instance.GlobalUi.RelicInventory;
+            _relics = (Control)sourceRelics.Duplicate(0);
+            foreach (var child in _relics.GetChildren()) { _relics.RemoveChild(child); child.Free(); }
+            AddChild(_relics); _relics.SetAnchorsAndOffsetsPreset(LayoutPreset.TopLeft);
+            _relics.Modulate = Colors.White;
+            _copies.Add((sourceRelics, _relics)); HideOriginal(sourceRelics);
         }
         if (player == null || NRun.Instance == null) return;
+        Modulate = new Color(1, 1, 1, RewardDemoController.ChromeOpacity);
+        NRun.Instance.GlobalUi.TopBar.Modulate = _oldBarTint * Modulate;
+        string relicsKey = string.Join('|', player.Relics.Select(r => $"{r.Id}:{r.Status}:{r.DisplayAmount}:{r.ShowCounter}"));
+        if (_relics != null && _relicsKey != relicsKey)
+        {
+            _relicsKey = relicsKey;
+            foreach (var child in _relics.GetChildren()) { _relics.RemoveChild(child); child.QueueFree(); }
+            foreach (var relic in player.Relics)
+            {
+                var holder = NRelicInventoryHolder.Create((RelicModel)relic.ClonePreservingMutability());
+                if (holder == null) continue;
+                _relics.AddChild(holder); DemoUi.ReadOnly(holder);
+            }
+        }
         foreach (var pair in _copies)
         {
             pair.Copy.Position = GetGlobalTransformWithCanvas().AffineInverse() * pair.Source.GetGlobalTransformWithCanvas().Origin;
@@ -152,4 +179,21 @@ internal static class BlockObservedPotionUse
 internal static class BlockObservedPotionShortcut
 {
     static bool Prefix() => DemoTopBar.ObservedPlayer == null;
+}
+
+[HarmonyPatch(typeof(NPotionPopup), "OnDiscardButtonPressed")]
+internal static class BlockObservedPotionDiscard
+{
+    static bool Prefix() => DemoTopBar.ObservedPlayer == null;
+}
+
+[HarmonyPatch(typeof(NPotionHolder), nameof(NPotionHolder.UsePotion))]
+internal static class BlockObservedPotionUseFromPopup
+{
+    static bool Prefix(ref Task __result)
+    {
+        if (DemoTopBar.ObservedPlayer == null) return true;
+        __result = Task.CompletedTask;
+        return false;
+    }
 }

@@ -9,16 +9,17 @@ using System.Text.Json;
 
 namespace Sts2Demo.Networking;
 
-public enum DemoRewardKind : byte { None, Rewards, CardChoice, Activity }
+public enum DemoRewardKind : byte { None, Rewards, CardChoice, Activity, Map }
 
 public sealed record DemoRewardEntry(string Type, string Text, List<DemoVisual> Icons);
 
 public struct DemoRewardMessage : INetMessage
 {
     public const int MaxOptions = 16;
-    public const byte Protocol = 2;
+    public const byte Protocol = 3;
     public byte ProtocolVersion;
     public uint Sequence;
+    public string? Screen;
     public RunLocation Location;
     public DemoRewardKind Kind;
     public int Hovered;
@@ -31,10 +32,21 @@ public struct DemoRewardMessage : INetMessage
     public List<DemoRewardEntry>? Entries;
     public string? Header;
     public bool Delta; // Cursor/selection-only update; keep the prior option descriptions.
+    public DemoTargetingState Targeting;
     public bool ShouldBroadcast => true;
-    public NetTransferMode Mode => NetTransferMode.Unreliable;
+    public NetTransferMode Mode => Delta ? NetTransferMode.Unreliable : NetTransferMode.Reliable;
     public LogLevel LogLevel => LogLevel.VeryDebug;
     public bool ShouldBuffer => false;
+    public readonly string ContentKey()
+    {
+        // Include every serialized card field (enchantment amount, modifiers, etc.)
+        // and every icon property, not just the model name and upgrade level.
+        var writer = new PacketWriter { WarnOnGrow = false };
+        foreach (var card in Cards ?? []) writer.Write(card);
+        return $"{Screen}:{Kind}:{Header}:" + Convert.ToHexString(writer.Buffer.AsSpan(0, writer.BytePosition))
+            + JsonSerializer.Serialize(Entries ?? [], DemoVisualCodec.Json)
+            + JsonSerializer.Serialize(Labels ?? [], DemoVisualCodec.Json);
+    }
     public void Serialize(PacketWriter writer)
     {
         writer.WriteByte(ProtocolVersion); writer.WriteUInt(Sequence); writer.Write(Location);
@@ -64,7 +76,7 @@ public struct DemoRewardMessage : INetMessage
             if (System.Text.Encoding.UTF8.GetByteCount(json) > 8192) throw new InvalidDataException("Reward metadata too long.");
             writer.WriteString(json);
         }
-        writer.WriteBool(Delta);
+        writer.WriteBool(Delta); writer.WriteString(Screen ?? ""); writer.Write(Targeting);
     }
     public void Deserialize(PacketReader reader)
     {
@@ -111,7 +123,7 @@ public struct DemoRewardMessage : INetMessage
                 || !DemoVisualCodec.SafeText(entry.Text) || !DemoVisualCodec.Valid(new DemoVisualUpdate { Items = entry.Icons })) throw new InvalidDataException("Invalid reward entry.");
             Entries.Add(entry);
         }
-        Delta = reader.ReadBool();
+        Delta = reader.ReadBool(); Screen = ReadBounded(reader, 160); Targeting = reader.Read<DemoTargetingState>();
     }
     private static string ReadBounded(PacketReader reader, int limit)
     {
