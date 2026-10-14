@@ -2,7 +2,7 @@
 
 Follow your friends' co-op play in Slay the Spire 2 with a read-only view of their hand, energy, health, powers, relics, cursor, animated card movements and reward choices.
 
-Click the eye beside a friend's status in the player list. The active friend's eye and avatar turn green; click the active eye again or press Esc to return to your own view. In card reward view, the exit eye is to the right of the cards. To change friends there, exit first and choose another friend in the player list.
+In combat, click the eye above a teammate's character. Outside combat, use the eye beside their status in the player list. The active eye turns green; click it again or press Esc to smoothly return to your own view. In card reward view, the exit eye is to the right of the cards. To change friends there, exit first and choose another friend in the player list. A native upgrade-preview checkbox lets you inspect upgraded versions of every offered card without changing real cards.
 
 You cannot play or select cards or claim rewards while observing. The native End Turn button still ends your own turn. Observation works after your character dies while a teammate is still playing.
 
@@ -14,9 +14,13 @@ You cannot play or select cards or claim rewards while observing. The native End
 - For a manual install, copy this folder into the game's `mods` folder while the game is closed.
 - Disable the mod in the game, or unsubscribe, to remove it. Do not delete or edit your saves.
 
-Version: 0.1.1. Internal mod ID and DLL name remain `Sts2Demo` for compatibility. Do not keep a second manually installed copy alongside the Workshop copy.
+Version: 1.2.0. Internal mod ID and DLL name remain `Sts2Demo` for compatibility. Do not keep a second manually installed copy alongside the Workshop copy.
 
-The mod focuses on combat hands, reward lists and card reward choices, not shops, events or separate relic-selection screens. It does not change card effects, combat rules or save serialization. When Friend View is the only successfully loaded cosmetic mod, the native game uses your normal profile. With any other mod or a loading error, normal modded-profile isolation remains. This choice is fixed until restart. Existing normal and modded data are never copied or merged; the game itself continues to save the selected profile. Back up your saves before testing a new version. The MODDED indicator remains visible.
+Observe full native reward windows, shops, events, crystal-sphere predictions, maps and supported out-of-combat card screens. Complex screens use read-only images of the game viewport, up to four frames per second at 1280x720, only while someone is watching. This adds network traffic (maximum 768 KiB/s per source stream before host forwarding); the desktop and personal menus are never captured. Player-list controls remain local. No duplicated Proceed/Skip control appears in the reward window.
+
+Demo is unavailable at rest sites, relic choices (including Ancient offers), personal menus and unknown third-party screens. Entering an unsupported screen closes the view automatically. Outside combat, a player who is already observing another player cannot themselves be observed. A disconnected peer or missing UI frames also closes demo safely.
+
+The mod does not change card effects, combat rules or save serialization. When Friend View is the only successfully loaded cosmetic mod, the native game uses your normal profile. With any other mod or a loading error, normal modded-profile isolation remains. This choice is fixed until restart. Existing normal and modded data are never copied or merged; the game itself continues to save the selected profile. Back up your saves before testing a new version. The MODDED indicator remains visible.
 
 ## Troubleshooting
 

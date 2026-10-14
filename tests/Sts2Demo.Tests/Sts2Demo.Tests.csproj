@@ -8,6 +8,9 @@
     <Compile Include="../../src/Sts2Demo/Core/DemoSession.cs" Link="DemoSession.cs" />
     <Compile Include="../../src/Sts2Demo/Networking/DemoMessages.cs" Link="DemoMessages.cs" />
     <Compile Include="../../src/Sts2Demo/Networking/DemoRewardMessage.cs" Link="DemoRewardMessage.cs" />
+    <Compile Include="../../src/Sts2Demo/Networking/DemoScreenMessage.cs" Link="DemoScreenMessage.cs" />
+    <Compile Include="../../src/Sts2Demo/Core/DemoScreenAssembly.cs" Link="DemoScreenAssembly.cs" />
+    <Compile Include="../../src/Sts2Demo/Core/DemoScreenPolicy.cs" Link="DemoScreenPolicy.cs" />
     <Reference Include="sts2"><HintPath>$(GameDir)/data_sts2_windows_x86_64/sts2.dll</HintPath></Reference>
     <Reference Include="GodotSharp"><HintPath>$(GameDir)/data_sts2_windows_x86_64/GodotSharp.dll</HintPath></Reference>
   </ItemGroup>

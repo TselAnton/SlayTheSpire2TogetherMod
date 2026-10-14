@@ -1,4 +1,4 @@
-param([string]$GameDir = $env:STS2_GAME_DIR, [switch]$StopOnly)
+param([string]$GameDir = $env:STS2_GAME_DIR, [switch]$StopOnly, [string]$CandidateDll)
 $ErrorActionPreference = 'Stop'
 $repoDir = Split-Path -Parent $PSScriptRoot
 if (-not $GameDir) { throw 'Set STS2_GAME_DIR or pass -GameDir with your game installation path.' }
@@ -17,7 +17,18 @@ foreach ($labProcess in (Get-Process SlayTheSpire2 -ErrorAction SilentlyContinue
 if ($StopOnly) { Write-Output 'Only the isolated lab process was stopped.'; exit 0 }
 & dotnet build "$repoDir/tests/Sts2Demo.Lab/Sts2Demo.Lab.csproj" -c Release "-p:GameDir=$GameDir" --no-restore
 if ($LASTEXITCODE -ne 0) { throw 'Lab build failed.' }
-Copy-Item -LiteralPath "$repoDir/src/Sts2Demo/.godot/mono/temp/bin/Release/Sts2Demo.dll", "$repoDir/src/Sts2Demo/Sts2Demo.json" -Destination "$labDir/mods/Sts2Demo"
+$modDll = "$repoDir/src/Sts2Demo/.godot/mono/temp/bin/Release/Sts2Demo.dll"
+if ($CandidateDll) {
+    $candidateResolved = (Resolve-Path -LiteralPath $CandidateDll).Path
+    $repoResolved = (Resolve-Path -LiteralPath $repoDir).Path + [IO.Path]::DirectorySeparatorChar
+    if (-not $candidateResolved.StartsWith($repoResolved, [StringComparison]::OrdinalIgnoreCase) -or [IO.Path]::GetFileName($candidateResolved) -ne 'Sts2Demo.dll') { throw 'Candidate must be an own Sts2Demo.dll inside this repository.' }
+    $manifest = Get-Content -LiteralPath "$repoDir/src/Sts2Demo/Sts2Demo.json" -Raw | ConvertFrom-Json
+    $version = [Reflection.AssemblyName]::GetAssemblyName($candidateResolved).Version
+    if ($version.ToString(3) -ne $manifest.version) { throw 'Candidate assembly/manifest version mismatch.' }
+    $modDll = $candidateResolved
+}
+Copy-Item -LiteralPath $modDll, "$repoDir/src/Sts2Demo/Sts2Demo.json" -Destination "$labDir/mods/Sts2Demo"
+Get-FileHash -LiteralPath "$labDir/mods/Sts2Demo/Sts2Demo.dll" -Algorithm SHA256
 Copy-Item -LiteralPath "$repoDir/tests/Sts2Demo.Lab/.godot/mono/temp/bin/Release/Sts2DemoLab.dll", "$repoDir/tests/Sts2Demo.Lab/Sts2DemoLab.json" -Destination "$labDir/mods/Sts2DemoLab"
 & uvx --from universal-modder um win launch $labExe -- --script "$labDir/isolate.gd" --force-steam off --rendering-method gl_compatibility --windowed --resolution 1280x720 --log-file "$repoDir/artifacts/lab-current.log"
 if ($LASTEXITCODE -ne 0) { throw 'Lab launch failed.' }

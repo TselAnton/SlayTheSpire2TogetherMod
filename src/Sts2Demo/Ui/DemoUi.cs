@@ -62,11 +62,9 @@ internal static partial class DemoUi
             PivotOffset = new(size / 2, size / 2), MouseFilter = Control.MouseFilterEnum.Stop,
             FocusMode = Control.FocusModeEnum.All,
         };
-        // Hover/focus must not erase the active observer's green tint.
-        button.MouseEntered += () => button.Scale = Vector2.One * 1.08f;
-        button.MouseExited += () => button.Scale = Vector2.One;
-        button.FocusEntered += () => button.Scale = Vector2.One * 1.08f;
-        button.FocusExited += () => button.Scale = Vector2.One;
+        // The whole square is clickable, including transparent pixels. Never animate
+        // this Control's transform: it is also the hitbox and controller focus rect.
+        button.TextureClickMask = null;
         return button;
     }
     public static Texture2D? LoadEye()

@@ -6,7 +6,7 @@ using MegaCrit.Sts2.Core.Saves.Runs;
 
 namespace Sts2Demo.Networking;
 
-public enum DemoRewardKind : byte { None, Rewards, CardChoice }
+public enum DemoRewardKind : byte { None, Rewards, CardChoice, Activity }
 
 public struct DemoRewardMessage : INetMessage
 {

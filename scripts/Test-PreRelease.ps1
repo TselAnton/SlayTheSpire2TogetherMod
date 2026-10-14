@@ -16,6 +16,22 @@ if ($assemblyVersion.Major -ne $declaredVersion.Major -or $assemblyVersion.Minor
 $allowed = @('Sts2Demo.dll', 'Sts2Demo.json', 'README.md', 'LICENSE')
 $files = Get-ChildItem -LiteralPath $contentDir -File -Recurse
 if ($files.Count -ne 4 -or ($files | Where-Object { $_.DirectoryName -ne $contentDir -or $_.Name -notin $allowed })) { throw 'Workshop content has unexpected/missing files.' }
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+$releaseZip = [IO.Compression.ZipFile]::OpenRead("$repoDir/dist/FriendView-$($manifest.version).zip")
+try {
+    if ($releaseZip.Entries | Where-Object { $_.FullName.Contains('\') -or $_.FullName.StartsWith('/') -or $_.FullName.Contains('../') }) { throw 'ZIP has non-portable or unsafe entry paths.' }
+    $dllEntry = $releaseZip.GetEntry('Sts2Demo/Sts2Demo.dll')
+    if (-not $dllEntry) { throw 'ZIP DLL entry missing.' }
+    $zipDll = $dllEntry.Open()
+    try {
+        $sha = [Security.Cryptography.SHA256]::Create()
+        try { $zipHash = [BitConverter]::ToString($sha.ComputeHash($zipDll)).Replace('-', '') }
+        finally { $sha.Dispose() }
+    }
+    finally { $zipDll.Dispose() }
+    if ($zipHash -ne (Get-FileHash -LiteralPath "$contentDir/Sts2Demo.dll" -Algorithm SHA256).Hash) { throw 'ZIP DLL differs from Workshop candidate.' }
+}
+finally { $releaseZip.Dispose() }
 $image = Get-Item -LiteralPath "$repoDir/workshop/FriendView/image.png"
 if ($image.Length -ge 1MB) { throw 'Preview exceeds Steam size limit.' }
 if ((Get-Content -LiteralPath "$repoDir/workshop/FriendView/mod_id.txt" -Raw).Trim() -ne '3819332749') { throw 'Unexpected Workshop item ID.' }

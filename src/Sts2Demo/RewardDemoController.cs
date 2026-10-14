@@ -16,6 +16,12 @@ using MegaCrit.Sts2.Core.Nodes.Screens;
 using MegaCrit.Sts2.Core.Nodes.Screens.CardSelection;
 using MegaCrit.Sts2.Core.Nodes.Screens.Map;
 using MegaCrit.Sts2.Core.Nodes.Rewards;
+using MegaCrit.Sts2.Core.Nodes.Rooms;
+using MegaCrit.Sts2.Core.Nodes.CommonUi;
+using MegaCrit.Sts2.Core.Assets;
+using MegaCrit.Sts2.Core.Localization;
+using MegaCrit.Sts2.Core.Nodes.Screens.ScreenContext;
+using MegaCrit.Sts2.Core.ControllerInput;
 using MegaCrit.Sts2.Core.Rewards;
 using MegaCrit.Sts2.Core.Runs;
 using Sts2Demo.Core;
@@ -61,7 +67,24 @@ public partial class RewardDemoController : Control
     private ulong _lastPresence;
     private uint _sequence;
     private bool _failed;
+    private Tween? _viewTween;
     private readonly HashSet<int> _highlighted = [];
+    private Control? _upgradeRow;
+    private NTickbox? _upgradeTickbox;
+    private bool _viewUpgraded;
+    private List<MegaCrit.Sts2.Core.Saves.Runs.SerializableCard> _displayOptions = [];
+    private TextureRect? _nativeImage;
+    private ImageTexture? _nativeTexture;
+    private DemoScreenAssembly _screenAssembly = new();
+    private ulong _lastCapture;
+    private ulong _lastNativeFrame;
+    private bool _capturePending;
+    private uint _screenSequence;
+    private Vector2 _nativeCursor;
+    private bool _nativeMouseDown;
+    private ulong _enteredAt;
+    private Vector2 _imageOrigin;
+    private Vector2 _imageSize = Vector2.One;
 
     public static void ContinueAfterCombat(ulong? target) => _continueTarget = target;
     public static void TrackRewards(NRewardsScreen screen, RewardsSet set) { _localRewardsScreen = screen; _localRewardsSet = set; }
@@ -109,6 +132,7 @@ public partial class RewardDemoController : Control
         _net = RunManager.Instance.NetService;
         _net.RegisterMessageHandler<DemoRewardMessage>(Receive);
         _net.RegisterMessageHandler<DemoPresenceMessage>(ReceivePresence);
+        _net.RegisterMessageHandler<DemoScreenMessage>(ReceiveScreen);
         if (RunManager.Instance.RunLobby is { } lobby)
         {
             lobby.RemotePlayerDisconnected += ResetPeer;
@@ -135,21 +159,33 @@ public partial class RewardDemoController : Control
         {
             _eye ??= DemoController.EyeTexture ?? DemoUi.LoadEye();
             ulong now = Time.GetTicksMsec();
+            if (!CombatManager.Instance.IsInProgress && !LocalScreenAllowed())
+            {
+                _continueTarget = null;
+                if (_target != null) ExitBecause("local screen is disabled for demo");
+            }
             if (CombatManager.Instance.IsInProgress) _continueTarget = null;
             if (now - _lastSend >= 100) { SendSnapshot(); RefreshEyes(now); _lastSend = now; }
             if (now - _lastPresence > 2000 && !CombatManager.Instance.IsInProgress) { SendPresence(); _lastPresence = now; }
+            if (now - _lastCapture >= 250 && !_capturePending && ShouldCapture(now))
+            { _lastCapture = now; _ = CaptureNativeScreen(); }
             if (_continueTarget is ulong pending && !CombatManager.Instance.IsInProgress
                 && _frames.TryGetValue(pending, out var waiting) && waiting.Message.Kind != DemoRewardKind.None)
             { _continueTarget = null; Enter(pending); }
             if (_target is not ulong target) return;
             if (CombatManager.Instance.IsInProgress || !Connected(target)) { ExitBecause("combat resumed or peer disconnected"); return; }
             if (!_frames.TryGetValue(target, out var frame) || now - frame.Seen > 5000) { ExitBecause("reward snapshot timed out"); return; }
+            if (frame.Message.Location != RunManager.Instance.DebugOnlyGetState()?.RunLocation) { ExitBecause("room changed"); return; }
             if (frame.Message.Kind == DemoRewardKind.None) { ExitBecause("peer closed reward screen"); return; }
             Render(frame.Message, (float)delta);
+            bool imageView = frame.Message.Kind is DemoRewardKind.Activity or DemoRewardKind.Rewards;
+            if (imageView && now - (_lastNativeFrame == 0 ? _enteredAt : _lastNativeFrame) > 5000)
+            { ExitBecause("native UI stream timed out"); return; }
             if (_cursor != null)
             {
-                _cursor.SetNextPosition(RunManager.Instance.InputSynchronizer.GetControlSpaceFocusPosition(target, this));
-                _cursor.UpdateImage(RunManager.Instance.InputSynchronizer.GetMouseDown(target), DrawingMode.None);
+                _cursor.Visible = !imageView || _lastNativeFrame != 0;
+                _cursor.SetNextPosition(imageView ? _nativeCursor * Size : RunManager.Instance.InputSynchronizer.GetControlSpaceFocusPosition(target, this));
+                _cursor.UpdateImage(imageView ? _nativeMouseDown : RunManager.Instance.InputSynchronizer.GetMouseDown(target), DrawingMode.None);
             }
         }
         catch (Exception e) { Log.Error($"[Friend View] Rewards observer disabled safely: {e}"); Exit(); _failed = true; }
@@ -188,14 +224,15 @@ public partial class RewardDemoController : Control
         foreach (var (avatar, original) in _avatarTints)
             if (GodotObject.IsInstanceValid(avatar) && avatar.SelfModulate == ActiveTint) avatar.SelfModulate = original;
         _avatarTints.Clear();
-        foreach (var eye in _eyes.Values) eye.Hide();
+        var seen = new HashSet<ulong>();
         foreach (var state in DemoUi.Descendants<NMultiplayerPlayerState>(NRun.Instance!.GlobalUi.MultiplayerPlayerContainer))
         {
             var id = state.Player.NetId;
             if (id == _net.NetId) continue;
+            seen.Add(id);
             if (!_eyes.TryGetValue(id, out var eye))
             {
-                eye = DemoUi.Eye(_eye, 56);
+                eye = DemoUi.Eye(_eye, 66);
                 eye.Name = $"AvatarDemoEye_{id}";
                 eye.ZIndex = 500;
                 AddChild(eye); _eyes[id] = eye;
@@ -205,11 +242,24 @@ public partial class RewardDemoController : Control
             var inverse = GetGlobalTransformWithCanvas().AffineInverse();
             var row = inverse * state.GlobalPosition;
             var avatarCenter = inverse * (avatar.GetGlobalTransformWithCanvas() * (avatar.Size / 2));
-            // Outside the row's labels/health bar, aligned with the avatar, never the creature in the room.
-            eye.Position = new(row.X + state.Hitbox.Size.X + 6, avatarCenter.Y - eye.Size.Y / 2);
-            bool available = _frames.TryGetValue(id, out var frame) && frame.Message.Kind != DemoRewardKind.None && now - frame.Seen < 3000;
+            // Anchor to the fixed row layout, not its animated hover hitbox.
+            var health = state.GetNode<MegaCrit.Sts2.Core.Nodes.Combat.NHealthBar>("%HealthBar").HpBarContainer;
+            float statusRight = (inverse * (health.GetGlobalTransformWithCanvas() * new Vector2(health.Size.X, 0))).X;
+            eye.Position = new(statusRight + 14, avatarCenter.Y - eye.Size.Y / 2);
+            var creature = combat ? NCombatRoom.Instance?.GetCreatureNode(state.Player.Creature) : null;
+            if (creature != null)
+            {
+                var top = creature.GetTopOfHitbox();
+                // Do not overlap the native miniature card/intent above the creature.
+                top.Y = Math.Min(top.Y, creature.IntentContainer.GlobalPosition.Y);
+                eye.Position = inverse * top - new Vector2(eye.Size.X / 2, eye.Size.Y + 18);
+                eye.Position = new(eye.Position.X, Math.Max(100, eye.Position.Y));
+            }
+            bool available = _frames.TryGetValue(id, out var frame) && frame.Message.Kind != DemoRewardKind.None && now - frame.Seen < 3000
+                && frame.Message.Location == RunManager.Instance.DebugOnlyGetState()?.RunLocation;
             bool selected = (combat ? DemoController.ObservedPlayerId : _target) == id;
-            eye.Visible = state.IsVisibleInTree() && !cardChoices;
+            eye.Visible = combat ? creature?.IsVisibleInTree() == true
+                : state.IsVisibleInTree() && !cardChoices && LocalScreenAllowed() && (available || selected);
             eye.Disabled = !Connected(id) || (!combat && !available && !selected);
             eye.Modulate = selected ? ActiveTint : Colors.White;
             if (selected)
@@ -222,6 +272,7 @@ public partial class RewardDemoController : Control
                 && now - p.Value.Seen < 6500 && Connected(p.Key)).Select(p => p.Key.ToString());
             eye.TooltipText = string.Join(", ", watchers.Prepend(state.Player.Character.Id.ToString()));
         }
+        foreach (var (id, eye) in _eyes) if (!seen.Contains(id)) eye.Hide();
     }
 
     private void SetPlayerListForeground(bool visible)
@@ -243,17 +294,21 @@ public partial class RewardDemoController : Control
     public bool Enter(ulong id)
     {
         if (id == _net.NetId || !Connected(id) || CombatManager.Instance.IsInProgress || _failed
-            || !_frames.TryGetValue(id, out var frame) || frame.Message.Kind == DemoRewardKind.None) return false;
+            || !LocalScreenAllowed() || !_frames.TryGetValue(id, out var frame) || frame.Message.Kind == DemoRewardKind.None
+            || frame.Message.Location != RunManager.Instance.DebugOnlyGetState()?.RunLocation) return false;
         _continueTarget = null;
         if (_target == id) return true;
+        _viewTween?.Kill();
         _target = id;
+        _lastNativeFrame = 0;
+        _enteredAt = Time.GetTicksMsec(); _screenAssembly = new();
         _contentKey = "";
         _view.Visible = true;
         _cursor?.QueueFree();
         _cursor = NRemoteMouseCursor.Create(id); _view.AddChild(_cursor);
         DemoUi.ReadOnly(_cursor); _cursor.ZIndex = 300;
         _view.Modulate = Colors.Transparent;
-        CreateTween().TweenProperty(_view, "modulate:a", 1f, .2);
+        _viewTween = CreateTween(); _viewTween.TweenProperty(_view, "modulate:a", 1f, .2);
         Render(frame.Message, 1);
         RefreshEyes(Time.GetTicksMsec());
         if (_exit.Visible) _exit.GrabFocus(); else FocusAvatarEye(id);
@@ -267,7 +322,15 @@ public partial class RewardDemoController : Control
     {
         _continueTarget = null;
         if (_target == null) return;
-        _target = null; _view.Hide(); Clear(); _cursor?.QueueFree(); _cursor = null;
+        _target = null; _viewTween?.Kill();
+        _cursor?.QueueFree(); _cursor = null;
+        if (IsInsideTree() && !_failed)
+        {
+            _viewTween = CreateTween();
+            _viewTween.TweenProperty(_view, "modulate:a", 0f, .18).SetTrans(Tween.TransitionType.Cubic).SetEase(Tween.EaseType.InOut);
+            _viewTween.TweenCallback(Callable.From(() => { _view.Hide(); Clear(); }));
+        }
+        else { _view.Hide(); Clear(); }
         SetPlayerListForeground(false);
         RefreshEyes(Time.GetTicksMsec());
         SendPresence();
@@ -285,6 +348,31 @@ public partial class RewardDemoController : Control
         if (_target == null) return;
         if (input.IsActionPressed("ui_cancel") || input is InputEventKey { Pressed: true, Echo: false, Keycode: Key.Escape })
         { Exit(); GetViewport().SetInputAsHandled(); }
+        else if (input.IsActionPressed(MegaInput.accept))
+        {
+            var focus = GetViewport().GuiGetFocusOwner();
+            if (focus == _upgradeTickbox && _upgradeTickbox?.IsVisibleInTree() == true)
+                AccessTools.Method(typeof(NTickbox), "OnRelease").Invoke(_upgradeTickbox, null);
+            else if (focus is TextureButton button && button.IsVisibleInTree() && !button.Disabled
+                && (button == _exit || _eyes.Values.Contains(button))) button.EmitSignal(BaseButton.SignalName.Pressed);
+            GetViewport().SetInputAsHandled();
+        }
+        else if (input.IsActionReleased(MegaInput.accept)) GetViewport().SetInputAsHandled();
+        else if (input.IsActionPressed(MegaInput.left) || input.IsActionPressed(MegaInput.up)
+            || input.IsActionPressed(MegaInput.right) || input.IsActionPressed(MegaInput.down))
+        {
+            var controls = new List<Control>();
+            if (_upgradeTickbox?.IsVisibleInTree() == true) controls.Add(_upgradeTickbox);
+            if (_exit.IsVisibleInTree()) controls.Add(_exit);
+            controls.AddRange(_eyes.Values.Where(e => e.IsVisibleInTree() && !e.Disabled).OrderBy(e => e.GlobalPosition.Y));
+            if (controls.Count > 0)
+            {
+                int index = controls.IndexOf(GetViewport().GuiGetFocusOwner());
+                int step = input.IsActionPressed(MegaInput.left) || input.IsActionPressed(MegaInput.up) ? -1 : 1;
+                controls[(index + step + controls.Count) % controls.Count].GrabFocus();
+            }
+            GetViewport().SetInputAsHandled();
+        }
         else if (input is InputEventKey or InputEventJoypadButton or InputEventJoypadMotion)
             GetViewport().SetInputAsHandled();
     }
@@ -295,7 +383,9 @@ public partial class RewardDemoController : Control
         if (_contentKey != key)
         {
             Clear(); _contentKey = key;
+            if (frame.Kind is DemoRewardKind.Activity or DemoRewardKind.Rewards) _enteredAt = Time.GetTicksMsec();
             var target = RunManager.Instance.DebugOnlyGetState()!.GetPlayer(_target!.Value)!;
+            _displayOptions = frame.Cards!.ToList();
             foreach (var serialized in frame.Cards!)
             {
                 // Detached display model. Never RunState.AddCard, CardScope, reward.Select or RNG.
@@ -306,11 +396,13 @@ public partial class RewardDemoController : Control
                 _contents.AddChild(card); DemoUi.ReadOnly(card);
                 card.UpdateVisuals(PileType.None, CardPreviewMode.Normal); _cards.Add(card);
             }
+            if (frame.Kind == DemoRewardKind.CardChoice) BuildUpgradeCheckbox();
             // Alternatives such as Skip belong to the friend's controls, not the observer's UI.
-            foreach (var text in frame.Kind == DemoRewardKind.CardChoice ? [] : frame.Labels!)
+            if (frame.Kind is DemoRewardKind.Rewards or DemoRewardKind.Activity)
             {
-                var label = DemoUi.Label(DemoUi.Plain(text), 27);
-                _contents.AddChild(label); _labels.Add(label);
+                _nativeImage = new TextureRect { Name = "NativeFriendScreen", MouseFilter = MouseFilterEnum.Ignore,
+                    ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize, StretchMode = TextureRect.StretchModeEnum.Scale };
+                _contents.AddChild(_nativeImage); _nativeImage.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
             }
         }
         float width = Math.Max(1, Size.X), height = Math.Max(1, Size.Y);
@@ -336,6 +428,8 @@ public partial class RewardDemoController : Control
         _exit.Modulate = ActiveTint;
         float cardsRight = width / 2 + Math.Max(0, _cards.Count - 1) * spacing / 2 + 160;
         _exit.Position = new(Math.Clamp(cardsRight + 30, 0, width - _exit.Size.X - 24), height / 2 - _exit.Size.Y / 2);
+        if (_upgradeRow != null) _upgradeRow.Position = new(width / 2 - _upgradeRow.Size.X / 2, height * .79f);
+        if (_nativeImage != null) { _nativeImage.Position = _imageOrigin * Size; _nativeImage.Size = _imageSize * Size; }
         SetPlayerListForeground(true);
     }
 
@@ -347,8 +441,10 @@ public partial class RewardDemoController : Control
             ProtocolVersion = 1, Sequence = ++_sequence, Location = RunManager.Instance.DebugOnlyGetState()!.RunLocation,
             Kind = DemoRewardKind.None, Hovered = -1, Chosen = -1, Cards = [], Labels = [],
         };
-        bool choicesOpen = !IsViewing && GodotObject.IsInstanceValid(_localChoiceScreen) && _localChoiceScreen!.IsInsideTree();
-        if (!IsViewing && (choicesOpen || _choiceHoldUntil > Time.GetTicksMsec()))
+        var activeScreen = ActiveScreenContext.Instance.GetCurrentScreen();
+        bool choicesOpen = !IsViewing && activeScreen is NCardRewardSelectionScreen
+            && GodotObject.IsInstanceValid(_localChoiceScreen) && _localChoiceScreen!.IsInsideTree();
+        if (!IsViewing && (choicesOpen || activeScreen is NRewardsScreen && _choiceHoldUntil > Time.GetTicksMsec()))
         {
             frame.Kind = DemoRewardKind.CardChoice;
             frame.Cards = _localOptions.Take(DemoRewardMessage.MaxOptions).Select(c => c.Card.ToSerializable()).ToList();
@@ -357,8 +453,10 @@ public partial class RewardDemoController : Control
             if (choicesOpen)
             {
                 var holders = DemoUi.Descendants<NGridCardHolder>(_localChoiceScreen!).ToList();
-                for (int i = 0; i < holders.Count; i++)
-                    if (holders[i].HasFocus() || holders[i].Hitbox.GetGlobalRect().HasPoint(GetGlobalMousePosition())) { frame.Hovered = i; break; }
+                // Mouse wins over the default keyboard/controller focus on card 0.
+                frame.Hovered = holders.FindIndex(h => h.Hitbox.GetGlobalRect().HasPoint(GetGlobalMousePosition()));
+                if (frame.Hovered < 0 && NControllerManager.Instance?.IsUsingController == true)
+                    frame.Hovered = holders.FindIndex(h => h.HasFocus() || h.Hitbox.HasFocus());
             }
         }
         else if (!IsViewing && GodotObject.IsInstanceValid(_localRewardsScreen) && _localRewardsScreen!.IsInsideTree() && !_localRewardsScreen.IsComplete && _localRewardsSet != null)
@@ -374,6 +472,15 @@ public partial class RewardDemoController : Control
             frame.Kind = summary.Kind; frame.Labels = summary.Labels; frame.Cards = [];
             frame.Hovered = summary.Hovered; frame.Chosen = summary.Chosen;
         }
+        // Block rest sites, shared relic selection, personal menus and unknown custom
+        // screens even when an old reward screen is still retained underneath them.
+        if (!LocalScreenAllowed() || IsViewing) frame.Kind = DemoRewardKind.None;
+        else if (frame.Kind != DemoRewardKind.CardChoice)
+        {
+            var screen = ActiveScreenContext.Instance.GetCurrentScreen();
+            frame.Kind = screen is NRewardsScreen ? DemoRewardKind.Rewards : DemoRewardKind.Activity;
+            frame.Cards = []; frame.Labels = [];
+        }
         _net.SendMessage(frame);
     }
 
@@ -381,7 +488,7 @@ public partial class RewardDemoController : Control
     {
         if (sender == _net.NetId || !Connected(sender) || frame.ProtocolVersion != 1
             || frame.Location != RunManager.Instance.DebugOnlyGetState()?.RunLocation
-            || frame.Kind > DemoRewardKind.CardChoice || frame.Cards == null || frame.Labels == null) return;
+            || frame.Kind > DemoRewardKind.Activity || frame.Cards == null || frame.Labels == null) return;
         if (_frames.TryGetValue(sender, out var previous) && !DemoSession.Newer(frame.Sequence, previous.Message.Sequence)) return;
         _frames[sender] = new(frame, Time.GetTicksMsec());
     }
@@ -407,11 +514,59 @@ public partial class RewardDemoController : Control
         foreach (var child in _contents.GetChildren()) { _contents.RemoveChild(child); child.QueueFree(); }
         _cards.Clear(); _labels.Clear(); _contentKey = "";
         _highlighted.Clear();
+        _upgradeRow = null; _upgradeTickbox = null; _viewUpgraded = false; _displayOptions = [];
+        _nativeImage = null; _nativeTexture = null; _lastNativeFrame = 0;
+    }
+
+    private void BuildUpgradeCheckbox()
+    {
+        // Duplicate only the native inspect tickbox subtree, never its screen,
+        // signals, owner or gameplay handlers. Its own shader animates visuals only.
+        var template = PreloadManager.Cache.GetScene("res://scenes/screens/inspect_card_screen.tscn").Instantiate<Control>();
+        var source = DemoUi.Descendants<NTickbox>(template).First(t => t.Name == "Upgrade");
+        _upgradeTickbox = (NTickbox)source.Duplicate((int)Node.DuplicateFlags.Scripts);
+        _upgradeTickbox.Name = "DemoViewUpgrades";
+        foreach (var child in DemoUi.Descendants<Node>(_upgradeTickbox)) child.Owner = _upgradeTickbox;
+        template.Free();
+        _upgradeRow = new Control { Name = "DemoUpgradeRow", Size = new(340, 60), MouseFilter = MouseFilterEnum.Ignore };
+        _contents.AddChild(_upgradeRow);
+        _upgradeRow.AddChild(_upgradeTickbox);
+        _upgradeTickbox.SetAnchorsAndOffsetsPreset(LayoutPreset.TopLeft);
+        _upgradeTickbox.Position = Vector2.Zero;
+        _upgradeTickbox.IsTicked = false;
+        _upgradeTickbox.Enable();
+        _upgradeTickbox.FocusMode = FocusModeEnum.All;
+        _upgradeTickbox.Connect(NTickbox.SignalName.Toggled, Callable.From<NTickbox>(_ =>
+        {
+            _viewUpgraded = _upgradeTickbox.IsTicked;
+            RefreshUpgradePreviews();
+        }));
+        foreach (var label in DemoUi.Descendants<Label>(_upgradeTickbox))
+            label.Text = new LocString("card_selection", "VIEW_UPGRADES").GetFormattedText();
+    }
+
+    private void RefreshUpgradePreviews()
+    {
+        var owner = RunManager.Instance.DebugOnlyGetState()!.GetPlayer(_target!.Value)!;
+        for (int i = 0; i < _cards.Count; i++)
+        {
+            var display = CardModel.FromSerializable(_displayOptions[i]);
+            display.Owner = owner;
+            if (_viewUpgraded && !display.IsUpgraded && display.IsUpgradable)
+            {
+                display.UpgradePreviewType = CardUpgradePreviewType.Deck;
+                display.UpgradeInternal();
+            }
+            _cards[i].Model = display;
+            if (_viewUpgraded) _cards[i].ShowUpgradePreview();
+            else _cards[i].UpdateVisuals(PileType.None, CardPreviewMode.Normal);
+        }
     }
     public override void _ExitTree()
     {
         Exit(); _net.UnregisterMessageHandler<DemoRewardMessage>(Receive);
         _net.UnregisterMessageHandler<DemoPresenceMessage>(ReceivePresence);
+        _net.UnregisterMessageHandler<DemoScreenMessage>(ReceiveScreen);
         if (RunManager.Instance.RunLobby is { } lobby)
         {
             lobby.RemotePlayerDisconnected -= ResetPeer;
@@ -421,6 +576,99 @@ public partial class RewardDemoController : Control
         _localChoiceScreen = null; _localRewardsScreen = null; _localRewardsSet = null;
         _localOptions = []; _localAlternatives = []; _continueTarget = null;
         _summaryClick = null; _summaryHoldUntil = 0;
+    }
+
+    private static bool LocalScreenAllowed()
+    {
+        var screen = ActiveScreenContext.Instance.GetCurrentScreen();
+        return screen?.GetType().Assembly == typeof(NRun).Assembly
+            && DemoScreenPolicy.Allowed(screen.GetType().Name, NRun.Instance?.RestSiteRoom != null, CombatManager.Instance.IsInProgress,
+                NRun.Instance?.EventRoom?.Layout is MegaCrit.Sts2.Core.Nodes.Events.NAncientEventLayout);
+    }
+
+    private bool ShouldCapture(ulong now) => !IsViewing && !DemoController.IsViewing && LocalScreenAllowed()
+        && ActiveScreenContext.Instance.GetCurrentScreen() is not NCardRewardSelectionScreen
+        && _presence.Any(p => Connected(p.Key) && p.Value.Message.Watching
+            && p.Value.Message.TargetId == _net.NetId && now - p.Value.Seen < 6500);
+
+    private async Task CaptureNativeScreen()
+    {
+        _capturePending = true;
+        try
+        {
+            await ToSignal(RenderingServer.Singleton, RenderingServer.SignalName.FramePostDraw);
+            if (!IsInsideTree() || !ShouldCapture(Time.GetTicksMsec())) return;
+            var run = RunManager.Instance.DebugOnlyGetState();
+            if (run == null || !_net.IsConnected) return;
+            // Only the game's viewport, never the desktop, another app or a file.
+            using var image = GetViewport().GetTexture().GetImage();
+            if (image.IsEmpty()) return;
+            var reference = GetViewport().GetVisibleRect().Size;
+            var bounds = new Rect2(Vector2.Zero, reference);
+            // Rewards: copy the native window only. Proceed/Skip is a sibling outside
+            // this subtree and must not become a second observer control or image.
+            if (ActiveScreenContext.Instance.GetCurrentScreen() is NRewardsScreen rewards)
+                bounds = rewards.GetNode<Control>("Rewards").GetGlobalRect().Intersection(bounds);
+            else
+            {
+                // Player rows are ordered local-player-first. Keep the observer's
+                // native list and real eye controls, rather than duplicate the peer's
+                // differently ordered list (including non-clickable baked-in eyes).
+                Rect2? playerPanel = null;
+                foreach (var row in DemoUi.Descendants<NMultiplayerPlayerState>(NRun.Instance!.GlobalUi.MultiplayerPlayerContainer))
+                    if (row.IsVisibleInTree()) playerPanel = playerPanel?.Merge(row.Hitbox.GetGlobalRect()) ?? row.Hitbox.GetGlobalRect();
+                foreach (var eye in _eyes.Values)
+                    if (eye.IsVisibleInTree()) playerPanel = playerPanel?.Merge(eye.GetGlobalRect()) ?? eye.GetGlobalRect();
+                if (playerPanel is Rect2 panel)
+                {
+                    panel = panel.Grow(12).Intersection(bounds);
+                    var factor = new Vector2(image.GetWidth(), image.GetHeight()) / reference;
+                    image.FillRect(new Rect2I((Vector2I)(panel.Position * factor), (Vector2I)(panel.Size * factor)), new Color(.025f, .035f, .04f, 1));
+                }
+            }
+            var origin = bounds.Position / reference; var size = bounds.Size / reference;
+            if (!DemoScreenMessage.ValidImageRect(origin, size)) return;
+            var pixels = new Rect2I((Vector2I)(origin * new Vector2(image.GetWidth(), image.GetHeight())),
+                (Vector2I)(size * new Vector2(image.GetWidth(), image.GetHeight())));
+            if (pixels.Size.X <= 0 || pixels.Size.Y <= 0) return;
+            using var capture = image.GetRegion(pixels);
+            capture.Convert(Image.Format.Rgb8);
+            float fit = Math.Min(1, Math.Min(1280f / capture.GetWidth(), 720f / capture.GetHeight()));
+            if (fit < 1) capture.Resize(Math.Max(1, (int)(capture.GetWidth() * fit)), Math.Max(1, (int)(capture.GetHeight() * fit)), Image.Interpolation.Lanczos);
+            var data = capture.SaveJpgToBuffer(.88f);
+            if (data.Length > DemoScreenMessage.MaxFrameBytes) data = capture.SaveJpgToBuffer(.65f);
+            if (data.Length == 0 || data.Length > DemoScreenMessage.MaxFrameBytes) return;
+            byte count = (byte)((data.Length + DemoScreenMessage.ChunkBytes - 1) / DemoScreenMessage.ChunkBytes);
+            uint sequence = ++_screenSequence;
+            Vector2 cursor = GetViewport().GetMousePosition() / reference;
+            for (byte i = 0; i < count; i++)
+            {
+                int offset = i * DemoScreenMessage.ChunkBytes;
+                _net.SendMessage(new DemoScreenMessage { ProtocolVersion = DemoScreenMessage.Protocol, Sequence = sequence, Location = run.RunLocation,
+                    Index = i, Count = count, Cursor = cursor, MouseDown = Input.IsMouseButtonPressed(MouseButton.Left),
+                    ImageOrigin = origin, ImageSize = size,
+                    Data = data.AsSpan(offset, Math.Min(DemoScreenMessage.ChunkBytes, data.Length - offset)).ToArray() });
+            }
+        }
+        catch (Exception e) { Log.Warn($"[Friend View] Native UI frame skipped: {e.Message}"); }
+        finally { _lastCapture = Time.GetTicksMsec(); _capturePending = false; }
+    }
+
+    private void ReceiveScreen(DemoScreenMessage message, ulong sender)
+    {
+        if (_target != sender || !Connected(sender) || message.ProtocolVersion != DemoScreenMessage.Protocol
+            || message.Location != RunManager.Instance.DebugOnlyGetState()?.RunLocation
+            || !_frames.TryGetValue(sender, out var frame) || frame.Message.Kind is not (DemoRewardKind.Activity or DemoRewardKind.Rewards)) return;
+        var data = _screenAssembly.Accept(message, Time.GetTicksMsec());
+        if (data == null || !DemoScreenAssembly.SafeJpeg(data) || _nativeImage == null) return;
+        using var image = new Image();
+        if (image.LoadJpgFromBuffer(data) != Error.Ok) return;
+        if (_nativeTexture != null && _nativeTexture.GetWidth() == image.GetWidth() && _nativeTexture.GetHeight() == image.GetHeight()) _nativeTexture.Update(image);
+        else { _nativeTexture = ImageTexture.CreateFromImage(image); _nativeImage.Texture = _nativeTexture; }
+        _nativeImage.SetAnchorsAndOffsetsPreset(LayoutPreset.TopLeft);
+        _imageOrigin = message.ImageOrigin; _imageSize = message.ImageSize;
+        _nativeImage.Position = _imageOrigin * Size; _nativeImage.Size = _imageSize * Size;
+        _nativeCursor = message.Cursor; _nativeMouseDown = message.MouseDown; _lastNativeFrame = Time.GetTicksMsec();
     }
 }
 

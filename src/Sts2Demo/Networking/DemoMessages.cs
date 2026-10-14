@@ -72,6 +72,7 @@ public struct DemoCardPose : IPacketSerializable
 
 public struct DemoHandMessage : INetMessage
 {
+    public const byte Protocol = 2;
     public const int MaxCards = 64;
     public byte ProtocolVersion;
     public uint Sequence;
@@ -80,6 +81,9 @@ public struct DemoHandMessage : INetMessage
     public bool Suspended;
     public Vector2 ReferenceSize;
     public List<DemoCardPose>? Cards;
+    public List<DemoCardPose>? Arrow;
+    public Vector2 ArrowTintRG;
+    public Vector2 ArrowTintBA;
     public bool ShouldBroadcast => true;
     public NetTransferMode Mode => NetTransferMode.Unreliable;
     public LogLevel LogLevel => LogLevel.VeryDebug;
@@ -95,6 +99,10 @@ public struct DemoHandMessage : INetMessage
         int count = Math.Min(Cards?.Count ?? 0, MaxCards);
         writer.WriteByte((byte)count);
         for (int i = 0; i < count; i++) writer.Write(Cards![i]);
+        count = Math.Min(Arrow?.Count ?? 0, 20);
+        writer.WriteByte((byte)count);
+        for (int i = 0; i < count; i++) writer.Write(Arrow![i]);
+        writer.WriteVector2(ArrowTintRG); writer.WriteVector2(ArrowTintBA);
     }
     public void Deserialize(PacketReader reader)
     {
@@ -108,5 +116,10 @@ public struct DemoHandMessage : INetMessage
         if (count > MaxCards) throw new InvalidDataException("Demo hand exceeds limit.");
         Cards = new(count);
         for (int i = 0; i < count; i++) Cards.Add(reader.Read<DemoCardPose>());
+        count = reader.ReadByte();
+        if (count > 20) throw new InvalidDataException("Demo arrow exceeds limit.");
+        Arrow = new(count);
+        for (int i = 0; i < count; i++) Arrow.Add(reader.Read<DemoCardPose>());
+        ArrowTintRG = reader.ReadVector2(); ArrowTintBA = reader.ReadVector2();
     }
 }

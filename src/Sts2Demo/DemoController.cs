@@ -20,6 +20,7 @@ using Sts2Demo.Core;
 using Sts2Demo.Networking;
 using Sts2Demo.Ui;
 using MegaCrit.sts2.Core.Nodes.TopBar;
+using MegaCrit.Sts2.Core.Assets;
 
 namespace Sts2Demo;
 
@@ -59,6 +60,10 @@ public partial class DemoController : Control
     private ulong _lastRefresh;
     private string _inventoryKey = "";
     private bool _failed;
+    private Tween? _returnTween;
+    private Color? _returnHandTint;
+    private Node2D _arrow = null!;
+    private readonly List<Sprite2D> _arrowParts = [];
 
     public override void _Ready()
     {
@@ -91,6 +96,14 @@ public partial class DemoController : Control
         _hand = new Control { Name = "ReadOnlyHand", MouseFilter = MouseFilterEnum.Ignore };
         _demo.AddChild(_hand);
         _hand.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
+        _arrow = new Node2D { Name = "DemoTargetingArrow", ZIndex = 150, Visible = false };
+        _demo.AddChild(_arrow);
+        for (int i = 0; i < 20; i++)
+        {
+            var part = new Sprite2D { Texture = PreloadManager.Cache.GetTexture2D(i == 19
+                ? "res://images/ui/combat/targeting_arrow_head.png" : "res://images/ui/combat/targeting_arrow_segment.png") };
+            _arrow.AddChild(part); _arrowParts.Add(part);
+        }
         _stars = DemoUi.Label("", 24);
         _demo.AddChild(_stars);
         _relics = new HFlowContainer { Name = "DemoRelics", MouseFilter = MouseFilterEnum.Ignore };
@@ -145,6 +158,7 @@ public partial class DemoController : Control
             }
             UpdateCards(target, (float)delta, now);
             UpdateCursor(target);
+            UpdateArrow(target, now);
         }
         catch (Exception error)
         {
@@ -182,7 +196,9 @@ public partial class DemoController : Control
             Ui.Hand.InCardPlay || Ui.Hand.IsInCardSelection || NModalContainer.Instance?.OpenModal != null
             || NRun.Instance?.GlobalUi.Overlays.ScreenCount > 0)) return false;
         _transition?.Kill();
+        RestoreReturnAnimation();
         ClearCards();
+        _arrow.Hide();
         _cursor?.QueueFree();
         _cursor = NRemoteMouseCursor.Create(id);
         _demo.AddChild(_cursor);
@@ -194,6 +210,18 @@ public partial class DemoController : Control
         HideLocal(Ui.Hand);
         Ui.Hand.DisableControllerNavigation();
         HideLocal(Ui.EnergyCounterContainer);
+        foreach (var previous in _ghosted.Keys.OfType<NRemoteTargetingIndicator>().ToArray())
+        {
+            if (GodotObject.IsInstanceValid(previous)) previous.Modulate = _ghosted[previous];
+            _ghosted.Remove(previous);
+        }
+        foreach (var indicator in DemoUi.Descendants<NRemoteTargetingIndicator>(NGame.Instance!))
+        {
+            var owner = (Player?)HarmonyLib.AccessTools.Field(typeof(NRemoteTargetingIndicator), "_player").GetValue(indicator);
+            if (owner?.NetId != id) continue;
+            if (!_ghosted.ContainsKey(indicator)) _ghosted[indicator] = indicator.Modulate;
+            indicator.Modulate = Colors.Transparent;
+        }
         if (NRun.Instance != null)
         {
             var hp = NRun.Instance.GlobalUi.TopBar.Hp;
@@ -242,27 +270,53 @@ public partial class DemoController : Control
         if (!_session.Active && _hidden.Count == 0 && _ghosted.Count == 0) return;
         _session.Exit();
         _transition?.Kill();
+        RestoreReturnAnimation();
         foreach (var (node, visible) in _hidden)
             if (GodotObject.IsInstanceValid(node)) node.Visible = visible;
         _hidden.Clear();
         foreach (var (node, color) in _ghosted) if (GodotObject.IsInstanceValid(node)) node.Modulate = color;
         _ghosted.Clear();
-        if (GodotObject.IsInstanceValid(_demo)) _demo.Visible = false;
-        ClearCards();
-        _cursor?.QueueFree();
-        _cursor = null;
-        _energy?.QueueFree();
-        _energy = null;
-        _health?.QueueFree();
-        _health = null;
+        bool animate = IsInsideTree() && CombatManager.Instance.IsInProgress && !_failed;
+        if (animate)
+        {
+            _transition = CreateTween();
+            _transition.TweenProperty(_demo, "modulate:a", 0f, .22).SetTrans(Tween.TransitionType.Cubic).SetEase(Tween.EaseType.InOut);
+            _transition.TweenCallback(Callable.From(ClearExitedView));
+        }
+        else ClearExitedView();
         if (GodotObject.IsInstanceValid(Ui.Hand) && Ui.Hand.IsInsideTree())
         {
             Ui.Hand.AnimIn();
             Ui.Hand.EnableControllerNavigation();
+            if (animate && Ui.Hand.Visible)
+            {
+                _returnHandTint = Ui.Hand.Modulate;
+                Ui.Hand.Modulate = new Color(_returnHandTint.Value, 0);
+                _returnTween = CreateTween();
+                _returnTween.TweenProperty(Ui.Hand, "modulate", _returnHandTint.Value, .22)
+                    .SetTrans(Tween.TransitionType.Cubic).SetEase(Tween.EaseType.InOut);
+                _returnTween.TweenCallback(Callable.From(RestoreReturnAnimation));
+            }
         }
         SendPresence();
         Log.Info("[Friend View] Exit demo; local UI restored.");
         NGame.Instance?.RemoteCursorContainer.ForceUpdateAllCursors();
+    }
+
+    private void RestoreReturnAnimation()
+    {
+        _returnTween?.Kill(); _returnTween = null;
+        if (_returnHandTint is Color tint && GodotObject.IsInstanceValid(Ui.Hand)) Ui.Hand.Modulate = tint;
+        _returnHandTint = null;
+    }
+
+    private void ClearExitedView()
+    {
+        if (GodotObject.IsInstanceValid(_demo)) _demo.Hide();
+        ClearCards(); _arrow.Hide();
+        _cursor?.QueueFree(); _cursor = null;
+        _energy?.QueueFree(); _energy = null;
+        _health?.QueueFree(); _health = null;
     }
 
     public override void _Input(InputEvent input)
@@ -399,6 +453,8 @@ public partial class DemoController : Control
     {
         if (_net?.IsConnected != true || RunManager.Instance.DebugOnlyGetState()?.Players.Count < 2) return;
         var cards = new List<DemoCardPose>();
+        var arrowPoses = new List<DemoCardPose>();
+        var arrowTint = Colors.White;
         bool suspended = _session.Active || NRun.Instance?.GlobalUi.Overlays.ScreenCount > 0;
         if (!suspended)
         {
@@ -419,12 +475,29 @@ public partial class DemoController : Control
                 if (cards.Count >= DemoHandMessage.MaxCards) break;
             }
         }
+        if (!suspended)
+        {
+            var native = DemoUi.Descendants<NTargetingArrow>(NGame.Instance!).FirstOrDefault(a => a.IsVisibleInTree());
+            if (native != null)
+            {
+                arrowTint = native.Modulate;
+                var inverse = GetGlobalTransformWithCanvas().AffineInverse();
+                foreach (var part in native.GetChildren().OfType<Sprite2D>().Take(20))
+                {
+                    var transform = inverse * part.GetGlobalTransformWithCanvas();
+                    var pose = new DemoCardPose { CardId = (uint)arrowPoses.Count, Position = transform.Origin / Ui.Size,
+                        Scale = transform.Scale, Rotation = transform.Rotation };
+                    if (pose.IsValid) arrowPoses.Add(pose);
+                }
+            }
+        }
         _net.SendMessage(new DemoHandMessage
         {
-            ProtocolVersion = DemoPresenceMessage.Protocol, Sequence = ++_handSequence,
+            ProtocolVersion = DemoHandMessage.Protocol, Sequence = ++_handSequence,
             Location = RunManager.Instance.DebugOnlyGetState()!.RunLocation,
             Round = CombatManager.Instance.DebugOnlyGetState()?.RoundNumber ?? 0,
             Suspended = suspended, ReferenceSize = Ui.Size, Cards = cards,
+            Arrow = arrowPoses, ArrowTintRG = new(arrowTint.R, arrowTint.G), ArrowTintBA = new(arrowTint.B, arrowTint.A),
         });
     }
 
@@ -452,13 +525,35 @@ public partial class DemoController : Control
 
     private void ReceiveHand(DemoHandMessage message, ulong sender)
     {
-        if (message.ProtocolVersion != DemoPresenceMessage.Protocol || !IsConnected(sender) || sender == _net!.NetId
+        if (message.ProtocolVersion != DemoHandMessage.Protocol || !IsConnected(sender) || sender == _net!.NetId
             || message.Cards == null || message.Cards.Any(c => !c.IsValid)
+            || message.Arrow == null || message.Arrow.Any(c => !c.IsValid)
+            || !ValidTint(message.ArrowTintRG) || !ValidTint(message.ArrowTintBA)
             || !float.IsFinite(message.ReferenceSize.X) || !float.IsFinite(message.ReferenceSize.Y)
             || message.ReferenceSize.X < 1 || message.ReferenceSize.Y < 1) return;
         if (message.Location != RunManager.Instance.DebugOnlyGetState()?.RunLocation) return;
         if (_frames.TryGetValue(sender, out var previous) && !DemoSession.Newer(message.Sequence, previous.Message.Sequence)) return;
         _frames[sender] = new(message, Time.GetTicksMsec());
+    }
+
+    private static bool ValidTint(Vector2 tint) => float.IsFinite(tint.X) && float.IsFinite(tint.Y)
+        && tint.X is >= 0 and <= 2 && tint.Y is >= 0 and <= 2;
+
+    private void UpdateArrow(Player target, ulong now)
+    {
+        _arrow.Visible = _frames.TryGetValue(target.NetId, out var frame) && now - frame.LastSeen < 500
+            && !frame.Message.Suspended && frame.Message.Round == CombatManager.Instance.DebugOnlyGetState()?.RoundNumber
+            && frame.Message.Arrow?.Count == 20;
+        if (!_arrow.Visible) return;
+        var message = frame!.Message;
+        _arrow.Modulate = new(message.ArrowTintRG.X, message.ArrowTintRG.Y, message.ArrowTintBA.X, message.ArrowTintBA.Y);
+        for (int i = 0; i < 20; i++)
+        {
+            var pose = message.Arrow![i];
+            _arrowParts[i].Position = pose.Position * Ui.Size;
+            _arrowParts[i].Scale = pose.Scale;
+            _arrowParts[i].Rotation = pose.Rotation;
+        }
     }
 
     private static string NameOf(Player player) => NameOf(player.NetId);

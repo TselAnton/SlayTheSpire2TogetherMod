@@ -81,3 +81,48 @@ try { var packet = new DemoRewardMessage(); packet.Deserialize(packetReader); }
 catch (InvalidDataException) { rejected = true; }
 Check(rejected, "Reject huge reward label before allocation");
 Console.WriteLine($"PASS: {assertions} observer-state and network assertions.");
+var arrow = Roundtrip(new DemoHandMessage { ProtocolVersion = DemoHandMessage.Protocol, Cards = [],
+    Arrow = [new DemoCardPose { CardId = 19, Position = new(.5f, .5f), Scale = Vector2.One, Rotation = 2 }],
+    ArrowTintRG = new(.8f, 1), ArrowTintBA = new(.5f, 1) });
+Check(arrow.Arrow!.Count == 1 && arrow.Arrow[0].CardId == 19 && arrow.Arrow[0].Rotation == 2
+    && arrow.ArrowTintRG.Y == 1 && arrow.ArrowTintBA.X == .5f, "Native arrow transform/tint roundtrip");
+Check(DemoScreenPolicy.Allowed("NCrystalSphereScreen", false, false), "Crystal sphere predictions can mirror native viewport");
+Check(DemoScreenPolicy.Allowed("NMerchantInventory", false, false) && DemoScreenPolicy.Allowed("NEventRoom", false, false), "Shop and event allowlist");
+Check(!DemoScreenPolicy.Allowed("NRewardsScreen", true, false), "Rest site disabled even with reward overlay");
+Check(!DemoScreenPolicy.Allowed("NSharedRelicPickingScreen", false, false), "Relic choices disabled");
+Check(!DemoScreenPolicy.Allowed("NSettingsScreen", false, false) && !DemoScreenPolicy.Allowed("UnknownModScreen", false, false), "Private/unknown screens denied");
+Check(!DemoScreenPolicy.Allowed("NMapScreen", false, true), "No off-combat stream during combat");
+var fragment = Roundtrip(new DemoScreenMessage { ProtocolVersion = 1, Sequence = 9, Count = 2, Index = 0,
+    Location = presence.Location, Cursor = new(.3f, .4f), MouseDown = true, Data = [1, 2, 3], ImageSize = Vector2.One });
+Check(fragment.Data!.SequenceEqual(new byte[] { 1, 2, 3 }) && fragment.Cursor.Y == .4f && fragment.MouseDown, "UI fragment wire roundtrip");
+var assembler = new DemoScreenAssembly();
+Check(assembler.Accept(fragment, 100) == null, "Incomplete UI frame not displayed");
+fragment.Index = 1; fragment.Data = [4, 5];
+Check(assembler.Accept(fragment, 200)!.SequenceEqual(new byte[] { 1, 2, 3, 4, 5 }), "UI frame assembled in order");
+Check(assembler.Accept(fragment, 210) == null, "Duplicate completed frame ignored");
+fragment.Sequence = 8;
+Check(assembler.Accept(fragment, 220) == null, "Old frame cannot replace new UI");
+fragment.Sequence = 10; fragment.Index = 0;
+Check(assembler.Accept(fragment, 300) == null, "New frame discards incomplete state");
+fragment.Index = 1;
+Check(assembler.Accept(fragment, 2000) == null, "Expired partial frame discarded");
+Check(!DemoScreenAssembly.SafeJpeg([0xff, 0xd8, 0xff]), "Truncated JPEG safely rejected");
+byte[] jpeg = [0xff, 0xd8, 0xff, 0xc0, 0, 11, 8, 2, 208, 5, 0, 1, 1, 0x11, 0, 0xff, 0xd9];
+Check(DemoScreenAssembly.SafeJpeg(jpeg), "JPEG dimensions checked before native decode");
+jpeg[9] = 127;
+Check(!DemoScreenAssembly.SafeJpeg(jpeg), "Decompression bomb dimensions rejected");
+Console.WriteLine($"PASS: {assertions} total observer, arrow, screen-policy and bounded-stream assertions.");
+Check(DemoScreenMessage.ValidImageRect(new(.3f, .2f), new(.3f, .6f)), "Native reward crop coordinates allowed");
+Check(!DemoScreenMessage.ValidImageRect(new(float.NaN, 0), Vector2.One), "NaN image rect rejected");
+Check(!DemoScreenMessage.ValidImageRect(Vector2.Zero, new(0, 1)) && !DemoScreenMessage.ValidImageRect(new(.9f, 0), new(.2f, 1)), "Empty/offscreen image rect rejected");
+var oversizedFrame = new PacketWriter { WarnOnGrow = false };
+oversizedFrame.WriteByte(DemoScreenMessage.Protocol); oversizedFrame.WriteUInt(1); oversizedFrame.Write(default(RunLocation));
+oversizedFrame.WriteByte(0); oversizedFrame.WriteByte((byte)(DemoScreenMessage.MaxChunks + 1));
+oversizedFrame.WriteVector2(Vector2.Zero); oversizedFrame.WriteBool(false); oversizedFrame.WriteVector2(Vector2.Zero);
+oversizedFrame.WriteVector2(Vector2.One); oversizedFrame.WriteInt(DemoScreenMessage.ChunkBytes + 1);
+packetReader.Reset(oversizedFrame.Buffer); rejected = false;
+try { var packet = new DemoScreenMessage(); packet.Deserialize(packetReader); } catch (InvalidDataException) { rejected = true; }
+Check(rejected, "Oversized UI frame rejected before payload allocation");
+Console.WriteLine($"PASS: {assertions} final assertions.");
+Check(!DemoScreenPolicy.Allowed("NEventRoom", false, false, ancientRelicChoice: true), "Ancient relic offers disabled until author narrows relic-choice scope");
+Console.WriteLine($"PASS: {assertions} release-candidate assertions.");

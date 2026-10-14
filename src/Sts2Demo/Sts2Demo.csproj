@@ -6,7 +6,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <LangVersion>13</LangVersion>
     <AssemblyName>Sts2Demo</AssemblyName>
-    <Version>0.1.1</Version>
+    <Version>1.2.0</Version>
     <GameDir Condition="'$(GameDir)' == ''">$(STS2_GAME_DIR)</GameDir>
     <GameDataDir>$(GameDir)/data_sts2_windows_x86_64</GameDataDir>
     <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>

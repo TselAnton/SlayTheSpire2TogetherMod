@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.2.0 — 2026-10-14
+
+- Stable rectangular eye hitboxes: no hover scaling of the input control, periodic hide/show or animated-hitbox anchoring.
+- Combat eyes above teammates, no player-list combat eyes; active green eye toggles observation off.
+- Native targeting-arrow art and exact live segment transforms, including tip size, curve and target tint; suppress the observed teammate's duplicate remote line.
+- Smooth exit crossfade restores the local hand and reward interface, including interrupted transitions.
+- Mouse hover takes priority over stale controller focus in card rewards; native localized upgrade-preview tickbox updates detached display copies of all offered cards.
+- Complete native reward window with frame and icons, without a duplicate Proceed/Skip control.
+- On-demand, bounded read-only viewport snapshots for shops, events, predictions, maps and supported out-of-combat card screens. Player-list controls stay local.
+- Rest sites and relic-choice screens disable demo and close an active view; personal menus and unknown mod screens are never broadcast.
+- Expanded repeatable lab, packet/security assertions and pre-release checklist. Released with author approval for subsequent real-client validation.
+
 ## 0.1.1 — 2026-10-14
 
 - Linux/SteamDeck startup: expose the system unwind provider globally before Harmony initializes, fixing MonoMod's missing `_Unwind_RaiseException` dependency without shipping native libraries or installing packages.
