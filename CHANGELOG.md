@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.3.0 — release candidate
+## 1.3.0 — 2026-10-14
 
 - Observe supported native events, dialogue, shops, predictions, rest sites, treasure, relic choices and card selection screens. Unknown screens close observation.
 - Send bounded asset/text/geometry state through the game's reliable transport, with changed elements at most twice per second and an explicit full-state recovery request. No screen images are transmitted.

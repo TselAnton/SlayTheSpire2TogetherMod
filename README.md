@@ -58,6 +58,6 @@ Esc или штатное действие отмены на геймпаде (�
 
 ## Распространение и лицензия
 
-[Объект Friend View в Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3819332749). Подготовка архива не означает загрузку обновления в Workshop.
+[Friend View 1.3.0 в Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3819332749). Обновление опубликовано 14 октября 2026 года в существующем объекте Workshop `3819332749`.
 
 Собственный код — MIT. Использованы Universal Modder, ILSpy, Harmony из поставки игры и Godot.NET.Sdk. Подключение к встроенному загрузчику основано на [STS2FirstMod](https://github.com/jiegec/STS2FirstMod). Игровые ассеты принадлежат Mega Crit и не включены в мод. Код разработан с помощью OpenAI Codex; новые изображения и аудио с помощью ИИ не создавались.
