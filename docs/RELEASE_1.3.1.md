@@ -1,6 +1,6 @@
 # Friend View 1.3.1
 
-Патч для Slay the Spire 2 v0.107.1, Godot 4.5.1 / .NET 9. Ветка `codex/demo-1.3.1`. Подготовлен локально; публикация и git push не выполнялись. Всем участникам нужна одинаковая версия 1.3.1 (протоколы окон/наград обновлены до 4).
+Патч для Slay the Spire 2 v0.107.1, Godot 4.5.1 / .NET 9. Ветка `codex/demo-1.3.1`. Исходники и [GitHub Release v1.3.1](https://github.com/TselAnton/SlayTheSpire2TogetherMod/releases/tag/v1.3.1) опубликованы 2026-10-14; состояние Steam — в [WORKSHOP.md](WORKSHOP.md). Всем участникам нужна одинаковая версия 1.3.1 (протоколы окон/наград обновлены до 4).
 
 ## Почему анимации дёргались
 
