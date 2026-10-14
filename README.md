@@ -92,7 +92,7 @@ dotnet run --project tests/Sts2Demo.Tests/Sts2Demo.Tests.csproj -c Release -p:Ga
 
 ## Steam Workshop
 
-Публичный объект: [Friend View](https://steamcommunity.com/sharedfiles/filedetails/?id=3819332749). Обновление 1.2.1 загружено официальным инструментом Mega Crit 14 октября 2026 по разрешению автора. [docs/WORKSHOP.md](docs/WORKSHOP.md) содержит порядок подготовки и загрузки в существующий объект.
+Публичный объект: [Friend View](https://steamcommunity.com/sharedfiles/filedetails/?id=3819332749). Обновление **1.2.2** загружено официальным инструментом Mega Crit 14 октября 2026 по разрешению автора. [Подтверждение релиза](docs/RELEASE_1.2.2.md); [docs/WORKSHOP.md](docs/WORKSHOP.md) содержит порядок подготовки и загрузки в существующий объект.
 
 ## Благодарности и лицензия
 

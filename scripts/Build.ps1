@@ -19,6 +19,9 @@ Copy-Item -LiteralPath "$repoDir/docs/COOP_TEST.md", "$repoDir/docs/VERIFICATION
 Copy-Item -LiteralPath "$repoDir/docs/SUPPORTED_MODES.md" -Destination $docsDir
 Copy-Item -LiteralPath "$repoDir/docs/PLAN_1.2.2.md" -Destination $docsDir
 Copy-Item -LiteralPath "$repoDir/docs/COMBAT_REWARDS_ONLY_1.2.2.md" -Destination $docsDir
+if (Test-Path -LiteralPath "$repoDir/docs/RELEASE_1.2.2.md") {
+    Copy-Item -LiteralPath "$repoDir/docs/RELEASE_1.2.2.md" -Destination $docsDir
+}
 $manifest = Get-Content -Raw "$repoDir/src/Sts2Demo/Sts2Demo.json" | ConvertFrom-Json
 Add-Type -AssemblyName System.IO.Compression
 function Write-PortableModArchive([string]$Destination) {
