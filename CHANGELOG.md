@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.2.2 — 2026-10-14
+
+- Preserve the local hand layout and exit crossfade when leaving demo.
+- Compute reward-card hover from the teammate's cursor; render post-combat reward descriptions and icons locally without screen-image streaming.
+- Add the observed player's native top bar: portrait with observation badge, HP, gold, potion slots and deck count. Map/settings open local screens; the deck button opens the teammate's deck.
+- Restore native localized selection banners, text sizes and reward-icon sizing; enlarge and centre the reward-card exit eye.
+- Render a static targeting arrow using native art and the enemy's target anchor, without elastic hover animation.
+- Put combat and reward-list eyes beside each teammate's status, with stable rectangular hitboxes, green toggle state and remappable controller actions.
+- Limit demo to combat and post-combat rewards. Events, dialogue, predictions, shops, rest sites and other activities are unavailable; their activity state is not published.
+- Send detailed hand/reward updates only while someone is watching; keep the previous observed screen when a teammate opens the map.
+
 ## 1.2.1 — 2026-10-14
 
 - Native controller navigation: select a teammate's combat character or player-list row, then use the focused-selection action (default Xbox A) to enter, switch friends or toggle the green eye off.

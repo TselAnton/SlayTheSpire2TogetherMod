@@ -30,5 +30,7 @@ if ($CandidateDll) {
 Copy-Item -LiteralPath $modDll, "$repoDir/src/Sts2Demo/Sts2Demo.json" -Destination "$labDir/mods/Sts2Demo"
 Get-FileHash -LiteralPath "$labDir/mods/Sts2Demo/Sts2Demo.dll" -Algorithm SHA256
 Copy-Item -LiteralPath "$repoDir/tests/Sts2Demo.Lab/.godot/mono/temp/bin/Release/Sts2DemoLab.dll", "$repoDir/tests/Sts2Demo.Lab/Sts2DemoLab.json" -Destination "$labDir/mods/Sts2DemoLab"
-& uvx --from universal-modder um win launch $labExe -- --script "$labDir/isolate.gd" --force-steam off --rendering-method gl_compatibility --windowed --resolution 1280x720 --log-file "$repoDir/artifacts/lab-current.log"
+$auditDir = Join-Path $repoDir 'artifacts/combat-rewards-only-1.2.2'
+New-Item -ItemType Directory -Path $auditDir -Force | Out-Null
+& uvx --from universal-modder um win launch $labExe -- --script "$labDir/isolate.gd" --force-steam off --rendering-method gl_compatibility --windowed --resolution 1280x720 --log-file "$auditDir/lab-current.log"
 if ($LASTEXITCODE -ne 0) { throw 'Lab launch failed.' }

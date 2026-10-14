@@ -2,9 +2,11 @@
 
 Follow your friends' co-op play in Slay the Spire 2 with a read-only view of their hand, energy, health, powers, relics, cursor, animated card movements and reward choices.
 
-In combat, click the eye above a teammate's character. Outside combat, use the eye beside their status in the player list. The active eye turns green; click it again or press Esc to smoothly return to your own view. In card reward view, the exit eye is to the right of the cards. To change friends there, exit first and choose another friend in the player list. A native upgrade-preview checkbox lets you inspect upgraded versions of every offered card without changing real cards.
+In combat and post-combat rewards, use the eye beside a teammate's status in the player list. The active eye turns green; click it again or press Esc to smoothly return to your own view. In card reward view, the exit eye is to the right of the cards. To change friends there, exit first and choose another friend in the player list. A native upgrade-preview checkbox lets you inspect upgraded versions of every offered card without changing real cards.
 
 You cannot play or select cards or claim rewards while observing. The native End Turn button still ends your own turn. Observation works after your character dies while a teammate is still playing.
+
+The native top bar shows your teammate's portrait, HP, gold, potions and deck count. Its map and settings buttons open your own local screens; its deck button opens the observed teammate's deck. A teammate opening their map does not replace the activity you are watching. Demo is limited to combat and post-combat rewards. Events, dialogue, predictions, shops, rest sites, relic selection and other activities are disabled.
 
 ## Requirements and installation
 
@@ -14,11 +16,11 @@ You cannot play or select cards or claim rewards while observing. The native End
 - For a manual install, copy this folder into the game's `mods` folder while the game is closed.
 - Disable the mod in the game, or unsubscribe, to remove it. Do not delete or edit your saves.
 
-Version: 1.2.1. Internal mod ID and DLL name remain `Sts2Demo` for compatibility. Do not keep a second manually installed copy alongside the Workshop copy.
+Version: 1.2.2. Internal mod ID and DLL name remain `Sts2Demo` for compatibility. Do not keep a second manually installed copy alongside the Workshop copy.
 
 Controller: select a teammate's combat character or player-list row with the native navigation, then use the focused-selection action (default Xbox A) to observe. Native cancel (B) returns to your own view. Native confirm (Y) toggles all reward-card upgrade previews; in combat it still ends YOUR turn. Button hints follow the current controller type and in-game remapping. Native card targeting keeps priority; a press/release belongs to one action only.
 
-Observe full native reward windows, shops, events, crystal-sphere predictions, maps and supported out-of-combat card screens. Complex screens use read-only images of the game viewport, up to four frames per second at 1280x720, only while someone is watching. This adds network traffic (maximum 768 KiB/s per source stream before host forwarding); the desktop and personal menus are never captured. Player-list controls remain local. No duplicated Proceed/Skip control appears in the reward window.
+Observe native reward windows, shops, events, crystal-sphere predictions, maps and supported out-of-combat card screens. Rewards and activity interfaces render locally from installed resources and bounded UI-state updates, only while someone is watching. No screen images or desktop capture are transmitted. Unchanged UI elements are not repeatedly sent. Decorative GPU effects and dynamic map drawings are not mirrored. Player-list controls remain local. No duplicated Proceed/Skip control appears in the reward window. Reward hover is computed locally from the teammate's cursor; combat arrows retain native art without elastic hover animations. Exiting preserves your native hand layout.
 
 Demo is unavailable at rest sites, relic choices (including Ancient offers), personal menus and unknown third-party screens. Entering an unsupported screen closes the view automatically. Outside combat, a player who is already observing another player cannot themselves be observed. A disconnected peer or missing UI frames also closes demo safely.
 

@@ -61,6 +61,7 @@ public partial class DemoController : Control
     private string _inventoryKey = "";
     private bool _failed;
     private Tween? _returnTween;
+    private Vector2 _lastArrowFrom, _lastArrowTo, _lastArrowSize;
     private Color? _returnHandTint;
     private Node2D _arrow = null!;
     private readonly List<Sprite2D> _arrowParts = [];
@@ -118,7 +119,7 @@ public partial class DemoController : Control
         try
         {
             ulong now = Time.GetTicksMsec();
-            if (now - _lastSend >= 66 && CombatManager.Instance.IsInProgress)
+            if (now - _lastSend >= 100 && CombatManager.Instance.IsInProgress)
             {
                 SendHand();
                 _lastSend = now;
@@ -139,13 +140,14 @@ public partial class DemoController : Control
             }
             if (!_net.IsConnected || target?.PlayerCombatState == null
                 || !IsConnected(target.NetId) || Ui.Hand.IsInCardSelection || Ui.Hand.InCardPlay
-                || NRun.Instance?.GlobalUi.Overlays.ScreenCount > 0
-                || NRun.Instance?.GlobalUi.CapstoneContainer.CurrentCapstoneScreen != null)
+                || !DemoTopBar.UtilityOpen && (NRun.Instance?.GlobalUi.Overlays.ScreenCount > 0
+                || NRun.Instance?.GlobalUi.CapstoneContainer.CurrentCapstoneScreen != null))
             {
                 ExitDemo();
                 return;
             }
-            if (NModalContainer.Instance?.OpenModal != null) { ExitDemo(); return; }
+            if (NModalContainer.Instance?.OpenModal != null && !DemoTopBar.UtilityOpen) { ExitDemo(); return; }
+            _demo.Visible = !DemoTopBar.UtilityOpen;
             Layout(target);
             // Game animations may attempt to reveal these again during a turn change.
             foreach (var node in _hidden.Keys) if (GodotObject.IsInstanceValid(node)) node.Visible = false;
@@ -224,24 +226,6 @@ public partial class DemoController : Control
         }
         if (NRun.Instance != null)
         {
-            var hp = NRun.Instance.GlobalUi.TopBar.Hp;
-            _health?.QueueFree();
-            _health = (NTopBarHp)hp.Duplicate((int)Node.DuplicateFlags.Scripts);
-            // This control was originally owned by the whole top-bar scene.
-            // Rebind its unique children before _Ready resolves %HpLabel.
-            foreach (var child in DemoUi.Descendants<Node>(_health))
-            {
-                child.Owner = _health;
-                if (child.Name == "HpLabel") child.UniqueNameInOwner = true;
-            }
-            _demo.AddChild(_health);
-            _health.SetAnchorsAndOffsetsPreset(LayoutPreset.TopLeft);
-            _health.Size = hp.Size;
-            _health.Initialize(player);
-            _health.Modulate = _ghosted.TryGetValue(hp, out var originalTint) ? originalTint : hp.Modulate;
-            DemoUi.ReadOnly(_health);
-            if (!_ghosted.ContainsKey(hp)) _ghosted[hp] = hp.Modulate;
-            hp.Modulate = Colors.Transparent; // Preserve its slot in the native HBox layout.
             HideLocal(NRun.Instance.GlobalUi.RelicInventory);
         }
         _inventoryKey = "";
@@ -286,7 +270,9 @@ public partial class DemoController : Control
         else ClearExitedView();
         if (GodotObject.IsInstanceValid(Ui.Hand) && Ui.Hand.IsInsideTree())
         {
-            Ui.Hand.AnimIn();
+            // Keep native anchors/offsets and turn-state tweens intact. AnimIn moves
+            // the root to absolute zero, which can put its cards in the corner.
+            HarmonyLib.AccessTools.Method(typeof(NPlayerHand), "RefreshLayout").Invoke(Ui.Hand, null);
             Ui.Hand.EnableControllerNavigation();
             if (animate && Ui.Hand.Visible)
             {
@@ -443,9 +429,11 @@ public partial class DemoController : Control
 
     private void SendHand()
     {
-        if (_net?.IsConnected != true || RunManager.Instance.DebugOnlyGetState()?.Players.Count < 2) return;
+        if (_net?.IsConnected != true || RunManager.Instance.DebugOnlyGetState()?.Players.Count < 2
+            || !_presence.Any(p => p.Value.Watching && p.Value.Target == _net.NetId
+                && IsConnected(p.Key) && Time.GetTicksMsec() - p.Value.LastSeen < 6500)) return;
         var cards = new List<DemoCardPose>();
-        var arrowPoses = new List<DemoCardPose>();
+        bool arrowVisible = false; Vector2 arrowFrom = Vector2.Zero, arrowTo = Vector2.Zero;
         var arrowTint = Colors.White;
         bool suspended = _session.Active || NRun.Instance?.GlobalUi.Overlays.ScreenCount > 0;
         if (!suspended)
@@ -474,13 +462,11 @@ public partial class DemoController : Control
             {
                 arrowTint = native.Modulate;
                 var inverse = GetGlobalTransformWithCanvas().AffineInverse();
-                foreach (var part in native.GetChildren().OfType<Sprite2D>().Take(20))
-                {
-                    var transform = inverse * part.GetGlobalTransformWithCanvas();
-                    var pose = new DemoCardPose { CardId = (uint)arrowPoses.Count, Position = transform.Origin / Ui.Size,
-                        Scale = transform.Scale, Rotation = transform.Rotation };
-                    if (pose.IsValid) arrowPoses.Add(pose);
-                }
+                arrowVisible = true;
+                var from = (Vector2)HarmonyLib.AccessTools.Property(typeof(NTargetingArrow), "From").GetValue(native)!;
+                var to = (Vector2)HarmonyLib.AccessTools.Field(typeof(NTargetingArrow), "_toPosition").GetValue(native)!;
+                arrowFrom = (inverse * from / Ui.Size).Clamp(-1, 2);
+                arrowTo = (inverse * to / Ui.Size).Clamp(-1, 2);
             }
         }
         _net.SendMessage(new DemoHandMessage
@@ -489,7 +475,7 @@ public partial class DemoController : Control
             Location = RunManager.Instance.DebugOnlyGetState()!.RunLocation,
             Round = CombatManager.Instance.DebugOnlyGetState()?.RoundNumber ?? 0,
             Suspended = suspended, ReferenceSize = Ui.Size, Cards = cards,
-            Arrow = arrowPoses, ArrowTintRG = new(arrowTint.R, arrowTint.G), ArrowTintBA = new(arrowTint.B, arrowTint.A),
+            ArrowVisible = arrowVisible, ArrowFrom = arrowFrom, ArrowTo = arrowTo, ArrowTintRG = new(arrowTint.R, arrowTint.G), ArrowTintBA = new(arrowTint.B, arrowTint.A),
         });
     }
 
@@ -513,13 +499,14 @@ public partial class DemoController : Control
         if (message.Watching && (sender == message.TargetId || RunManager.Instance.DebugOnlyGetState()?.GetPlayer(message.TargetId) == null)) return;
         if (_presence.TryGetValue(sender, out var previous) && !DemoSession.Newer(message.Sequence, previous.Sequence)) return;
         _presence[sender] = new(message.TargetId, message.Watching, message.Sequence, Time.GetTicksMsec());
+        if (message.Watching && message.TargetId == _net!.NetId) SendHand();
     }
 
     private void ReceiveHand(DemoHandMessage message, ulong sender)
     {
         if (message.ProtocolVersion != DemoHandMessage.Protocol || !IsConnected(sender) || sender == _net!.NetId
             || message.Cards == null || message.Cards.Any(c => !c.IsValid)
-            || message.Arrow == null || message.Arrow.Any(c => !c.IsValid)
+            || !ValidPoint(message.ArrowFrom) || !ValidPoint(message.ArrowTo)
             || !ValidTint(message.ArrowTintRG) || !ValidTint(message.ArrowTintBA)
             || !float.IsFinite(message.ReferenceSize.X) || !float.IsFinite(message.ReferenceSize.Y)
             || message.ReferenceSize.X < 1 || message.ReferenceSize.Y < 1) return;
@@ -528,6 +515,9 @@ public partial class DemoController : Control
         _frames[sender] = new(message, Time.GetTicksMsec());
     }
 
+    private static bool ValidPoint(Vector2 point) => float.IsFinite(point.X) && float.IsFinite(point.Y)
+        && point.X is >= -2 and <= 2 && point.Y is >= -2 and <= 2;
+
     private static bool ValidTint(Vector2 tint) => float.IsFinite(tint.X) && float.IsFinite(tint.Y)
         && tint.X is >= 0 and <= 2 && tint.Y is >= 0 and <= 2;
 
@@ -535,13 +525,16 @@ public partial class DemoController : Control
     {
         _arrow.Visible = _frames.TryGetValue(target.NetId, out var frame) && now - frame.LastSeen < 500
             && !frame.Message.Suspended && frame.Message.Round == CombatManager.Instance.DebugOnlyGetState()?.RoundNumber
-            && frame.Message.Arrow?.Count == 20;
+            && frame.Message.ArrowVisible;
         if (!_arrow.Visible) return;
         var message = frame!.Message;
         _arrow.Modulate = new(message.ArrowTintRG.X, message.ArrowTintRG.Y, message.ArrowTintBA.X, message.ArrowTintBA.Y);
+        if (_lastArrowFrom == message.ArrowFrom && _lastArrowTo == message.ArrowTo && _lastArrowSize == Ui.Size) return;
+        _lastArrowFrom = message.ArrowFrom; _lastArrowTo = message.ArrowTo; _lastArrowSize = Ui.Size;
+        var poses = DemoArrowLayout.Build(message.ArrowFrom * Ui.Size, message.ArrowTo * Ui.Size, Ui.Size);
         for (int i = 0; i < 20; i++)
         {
-            var pose = message.Arrow![i];
+            var pose = poses[i];
             _arrowParts[i].Position = pose.Position * Ui.Size;
             _arrowParts[i].Scale = pose.Scale;
             _arrowParts[i].Rotation = pose.Rotation;

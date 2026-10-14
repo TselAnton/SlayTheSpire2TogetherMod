@@ -6,12 +6,12 @@ using MegaCrit.Sts2.Core.Runs;
 
 namespace Sts2Demo.Networking;
 
-/// <summary>On-demand UI frames, not desktop capture. Lost fragments never block gameplay packets.</summary>
+/// <summary>Bounded compressed asset/text/layout metadata. No image bytes or GPU readback.</summary>
 public struct DemoScreenMessage : INetMessage
 {
-    public const byte Protocol = 2;
-    public const int MaxFrameBytes = 192 * 1024;
-    public const int ChunkBytes = 12 * 1024;
+    public const byte Protocol = 3;
+    public const int MaxFrameBytes = 32 * 1024;
+    public const int ChunkBytes = 4 * 1024;
     public const int MaxChunks = MaxFrameBytes / ChunkBytes;
     public byte ProtocolVersion;
     public uint Sequence;
@@ -24,7 +24,7 @@ public struct DemoScreenMessage : INetMessage
     public Vector2 ImageSize;
     public byte[]? Data;
     public bool ShouldBroadcast => true;
-    public NetTransferMode Mode => NetTransferMode.Unreliable;
+    public NetTransferMode Mode => NetTransferMode.Reliable;
     public LogLevel LogLevel => LogLevel.VeryDebug;
     public bool ShouldBuffer => false;
     public void Serialize(PacketWriter writer)

@@ -19,7 +19,7 @@ public sealed class DemoScreenAssembly
             _sequence = fragment.Sequence; _started = now; _complete = false;
             _parts = new byte[fragment.Count][];
         }
-        if (_complete || now - _started > 1500 || _parts.Length != fragment.Count || _parts[fragment.Index] != null) return null;
+        if (_complete || now - _started > 5000 || _parts.Length != fragment.Count || _parts[fragment.Index] != null) return null;
         _parts[fragment.Index] = fragment.Data;
         if (_parts.Any(p => p == null)) return null;
         _complete = true;
@@ -30,31 +30,9 @@ public sealed class DemoScreenAssembly
         _parts = []; return result;
     }
 
-    // Check JPEG dimensions BEFORE native decoding; do not trust compressed size.
-    public static bool SafeJpeg(ReadOnlySpan<byte> data)
+    public static bool SafeMetadata(byte[] data)
     {
-        if (data.Length is < 16 or > DemoScreenMessage.MaxFrameBytes || data[0] != 0xff || data[1] != 0xd8) return false;
-        int pos = 2;
-        while (pos + 4 <= data.Length)
-        {
-            if (data[pos++] != 0xff) return false;
-            while (pos < data.Length && data[pos] == 0xff) pos++;
-            if (pos >= data.Length) return false;
-            byte marker = data[pos++];
-            if (marker is 0xda or 0xd9) return false;
-            if (marker is 0x01 or >= 0xd0 and <= 0xd7) continue;
-            if (pos + 2 > data.Length) return false;
-            int length = (data[pos] << 8) | data[pos + 1];
-            if (length < 2 || pos + length > data.Length) return false;
-            if (marker is 0xc0 or 0xc1 or 0xc2)
-            {
-                if (length < 8) return false;
-                int height = (data[pos + 3] << 8) | data[pos + 4];
-                int width = (data[pos + 5] << 8) | data[pos + 6];
-                return width is > 0 and <= 1280 && height is > 0 and <= 720;
-            }
-            pos += length;
-        }
-        return false;
+        try { return data.Length <= DemoScreenMessage.MaxFrameBytes && DemoVisualCodec.Valid(DemoVisualCodec.Decode(data)); }
+        catch (Exception e) when (e is InvalidDataException or System.Text.Json.JsonException or IOException or InvalidOperationException) { return false; }
     }
 }

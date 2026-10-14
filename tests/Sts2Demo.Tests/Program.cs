@@ -82,16 +82,21 @@ catch (InvalidDataException) { rejected = true; }
 Check(rejected, "Reject huge reward label before allocation");
 Console.WriteLine($"PASS: {assertions} observer-state and network assertions.");
 var arrow = Roundtrip(new DemoHandMessage { ProtocolVersion = DemoHandMessage.Protocol, Cards = [],
-    Arrow = [new DemoCardPose { CardId = 19, Position = new(.5f, .5f), Scale = Vector2.One, Rotation = 2 }],
+    ArrowVisible = true, ArrowFrom = new(.3f, .8f), ArrowTo = new(.7f, .3f),
     ArrowTintRG = new(.8f, 1), ArrowTintBA = new(.5f, 1) });
-Check(arrow.Arrow!.Count == 1 && arrow.Arrow[0].CardId == 19 && arrow.Arrow[0].Rotation == 2
+Check(arrow.ArrowVisible && arrow.ArrowFrom == new Vector2(.3f, .8f) && arrow.ArrowTo == new Vector2(.7f, .3f)
     && arrow.ArrowTintRG.Y == 1 && arrow.ArrowTintBA.X == .5f, "Native arrow transform/tint roundtrip");
-Check(DemoScreenPolicy.Allowed("NCrystalSphereScreen", false, false), "Crystal sphere predictions can mirror native viewport");
-Check(DemoScreenPolicy.Allowed("NMerchantInventory", false, false) && DemoScreenPolicy.Allowed("NEventRoom", false, false), "Shop and event allowlist");
+Check(!DemoScreenPolicy.Allowed("NCrystalSphereScreen", false, false), "Predictions disabled");
+Check(!DemoScreenPolicy.Allowed("NMerchantInventory", false, false) && !DemoScreenPolicy.Allowed("NEventRoom", false, false), "Shops and events disabled");
+foreach (var screen in new[] { "NDeckCardSelectScreen", "NChooseACardSelectionScreen", "NChooseABundleSelectionScreen", "NDeckUpgradeSelectScreen", "NDeckTransformSelectScreen", "NDeckEnchantSelectScreen", "NSimpleCardSelectScreen", "NInspectCardScreen", "NDeckViewScreen" })
+    Check(!DemoScreenPolicy.Allowed(screen, false, false), "No remote activity: " + screen);
+Check(!DemoScreenPolicy.Allowed("NMerchantRoom", false, false) && !DemoScreenPolicy.Allowed("NFakeMerchant", false, false)
+    && !DemoScreenPolicy.Allowed("NFakeMerchantInventory", false, false), "All merchant variants blocked");
 Check(!DemoScreenPolicy.Allowed("NRewardsScreen", true, false), "Rest site disabled even with reward overlay");
 Check(!DemoScreenPolicy.Allowed("NSharedRelicPickingScreen", false, false), "Relic choices disabled");
 Check(!DemoScreenPolicy.Allowed("NSettingsScreen", false, false) && !DemoScreenPolicy.Allowed("UnknownModScreen", false, false), "Private/unknown screens denied");
 Check(!DemoScreenPolicy.Allowed("NMapScreen", false, true), "No off-combat stream during combat");
+Check(!DemoScreenPolicy.Allowed("NMapRoom", false, false), "Standalone map room is not an observed activity");
 var fragment = Roundtrip(new DemoScreenMessage { ProtocolVersion = 1, Sequence = 9, Count = 2, Index = 0,
     Location = presence.Location, Cursor = new(.3f, .4f), MouseDown = true, Data = [1, 2, 3], ImageSize = Vector2.One });
 Check(fragment.Data!.SequenceEqual(new byte[] { 1, 2, 3 }) && fragment.Cursor.Y == .4f && fragment.MouseDown, "UI fragment wire roundtrip");
@@ -105,12 +110,14 @@ Check(assembler.Accept(fragment, 220) == null, "Old frame cannot replace new UI"
 fragment.Sequence = 10; fragment.Index = 0;
 Check(assembler.Accept(fragment, 300) == null, "New frame discards incomplete state");
 fragment.Index = 1;
-Check(assembler.Accept(fragment, 2000) == null, "Expired partial frame discarded");
-Check(!DemoScreenAssembly.SafeJpeg([0xff, 0xd8, 0xff]), "Truncated JPEG safely rejected");
-byte[] jpeg = [0xff, 0xd8, 0xff, 0xc0, 0, 11, 8, 2, 208, 5, 0, 1, 1, 0x11, 0, 0xff, 0xd9];
-Check(DemoScreenAssembly.SafeJpeg(jpeg), "JPEG dimensions checked before native decode");
-jpeg[9] = 127;
-Check(!DemoScreenAssembly.SafeJpeg(jpeg), "Decompression bomb dimensions rejected");
+Check(assembler.Accept(fragment, 6000) == null, "Expired partial frame discarded");
+Check(!DemoScreenAssembly.SafeMetadata([0xff, 0xd8, 0xff]), "Image payload is not UI metadata");
+var metadata = new DemoVisualUpdate { Full = true, Screen = "NCrystalSphereScreen", Items = [
+    new DemoVisual { Id = "Board/Counter", Kind = 1, Text = "Предсказания: 3", Size = [100, 30] }] };
+var packedMetadata = DemoVisualCodec.Encode(metadata);
+Check(DemoScreenAssembly.SafeMetadata(packedMetadata), "Bounded metadata validated before local rendering");
+var decoded = DemoVisualCodec.Decode(packedMetadata);
+Check(decoded.Items[0].Text == metadata.Items[0].Text && decoded.Full, "Compressed Unicode metadata roundtrip");
 Console.WriteLine($"PASS: {assertions} total observer, arrow, screen-policy and bounded-stream assertions.");
 Check(DemoScreenMessage.ValidImageRect(new(.3f, .2f), new(.3f, .6f)), "Native reward crop coordinates allowed");
 Check(!DemoScreenMessage.ValidImageRect(new(float.NaN, 0), Vector2.One), "NaN image rect rejected");
@@ -141,3 +148,61 @@ Check(DemoInputPolicy.Resolve("ui_right", true, false, false, false) == DemoInpu
 Check(DemoInputPolicy.Resolve("ui_up", false, true, false, true) == DemoInputAction.Navigate, "Reward observer navigates owned controls");
 Check(DemoInputPolicy.Resolve("mega_view_map", false, false, false, false) == DemoInputAction.None, "Normal gameplay shortcuts remain untouched");
 Console.WriteLine($"PASS: {assertions} final controller-policy assertions.");
+for (int i = 0; i < 3; i++)
+{
+    var center = DemoRewardLayout.Center(1920, 1080, 3, i) / new Vector2(1920, 1080);
+    Check(DemoRewardLayout.Hover(center, 1920, 1080, 3) == i, $"Cursor chooses reward card {i}, not last hitbox");
+    Check(DemoRewardLayout.Hover(center, 1280, 720, 3) == i, $"Scaled cursor chooses reward card {i}");
+}
+Check(DemoRewardLayout.Hover(new(.01f, .05f), 1920, 1080, 3) == -1, "No reward hover outside cards");
+var visualState = new DemoVisualState();
+Check(visualState.Apply(metadata, 1) && visualState.Items.Count == 1, "Metadata full state initialized");
+var delta = new DemoVisualUpdate { Screen = metadata.Screen, Base = 1, Items = [
+    metadata.Items[0] with { Text = "2" }] };
+Check(visualState.Apply(delta, 2) && visualState.Items["Board/Counter"].Text == "2", "Only changed UI label applied");
+Check(!visualState.Apply(delta with { Base = 1 }, 3), "Missing delta baseline rejected");
+Check(!visualState.Apply(metadata, 1), "Old UI full state rejected");
+Check(visualState.Apply(metadata with { Screen = "NMerchantInventory" }, 4), "New screen replaces old UI state");
+Check(!DemoVisualCodec.SafeAsset("user://settings.save") && !DemoVisualCodec.SafeAsset("res://images/../../settings.save"),
+    "Remote metadata cannot load save files or traverse paths");
+Check(!DemoVisualCodec.SafeAsset("https://host/asset.png") && !DemoVisualCodec.SafeAsset("res://scripts/danger.cs"),
+    "No remote network assets or scripts");
+Check(!DemoVisualCodec.Valid(metadata with { Items = [metadata.Items[0] with { Transform = [1, 0, 0, 1, float.NaN, 0] }] }),
+    "Invalid visual geometry rejected");
+Check(!DemoVisualCodec.Valid(metadata with { Items = [metadata.Items[0] with { Text = new string('a', 4097) }] }),
+    "UI text length bounded");
+Check(!DemoVisualCodec.Valid(metadata with { Items = null! }), "Null collections rejected safely");
+var many = metadata with { Items = Enumerable.Range(0, 121).Select(i => metadata.Items[0] with { Id = $"Cell{i}", Text = i.ToString() }).ToList() };
+Check(DemoVisualCodec.Encode(many).Length < 8000, "121 prediction cells use compact metadata, not JPEG-sized frames");
+Check(DemoVisualCodec.Encode(new DemoVisualUpdate { Screen = metadata.Screen, Base = 1 }).Length < 256, "Steady UI sends tiny heartbeat");
+var staticArrow = DemoArrowLayout.Build(new(960, 900), new(1500, 500), new(1920, 1080));
+Check(staticArrow.Count == 20 && staticArrow[19].Scale == Vector2.One * .95f, "Local native-art arrow has static head scale");
+Check(staticArrow.All(p => p.IsValid), "Static local arrow poses finite");
+var arrowWriter = new PacketWriter { WarnOnGrow = false };
+new DemoHandMessage { Cards = [], ReferenceSize = new(1920, 1080), ArrowVisible = true, ArrowFrom = new(.5f, .8f), ArrowTo = new(.8f, .4f) }.Serialize(arrowWriter);
+Check(arrowWriter.BytePosition < 100, "Arrow sends endpoints only, not 20 sprite transforms");
+var typedReward = Roundtrip(new DemoRewardMessage { Cards = [], Labels = [], Header = "Награды",
+    Entries = [new DemoRewardEntry("GoldReward", "100 gold", [])], Cursor = new(.5f, .5f), Controller = false });
+Check(typedReward.Entries![0].Type == "GoldReward" && typedReward.Entries[0].Text == "100 gold"
+    && typedReward.Cursor.X == .5f, "Reward descriptions/types/cursor roundtrip without images or Reward objects");
+Console.WriteLine($"PASS: {assertions} final 1.2.2 assertions.");
+var anchors = new[] { new Vector2(.2f, .4f), new Vector2(.5f, .4f), new Vector2(.8f, .4f) };
+for (int i = 0; i < anchors.Length; i++)
+    Check(DemoRewardLayout.Hover(anchors[i], new(1920, 1080), anchors) == i, $"Source model-mapped anchor selects card {i}");
+Check(DemoRewardLayout.Hover(new(float.NaN, .4f), new(1920, 1080), anchors) == -1, "Non-finite reward cursor cannot select a card");
+Check(!DemoVisualCodec.Valid(metadata with { Items = [metadata.Items[0] with { Clip = [0, 0, 1] }] }), "Invalid prediction tile clip rejected");
+Check(!DemoVisualCodec.Valid(metadata with { Items = [metadata.Items[0] with { Shader = "user://shader.gdshader" }] }), "Only installed-game shader paths accepted");
+Check(!DemoVisualCodec.Valid(metadata with { Items = [metadata.Items[0] with { Uniforms = new() { ["h"] = [float.NaN] } }] }), "Non-finite shader metadata rejected");
+Check(!DemoVisualCodec.SafeText("[img]user://settings.save[/img]"), "BBCode images cannot load private files");
+Check(DemoVisualCodec.SafeText("[gold]20 gold[/gold] [img]res://images/icon.png[/img]"), "Native formatting and installed icons allowed");
+var textStyle = metadata with { Items = [metadata.Items[0] with { VerticalAlign = 1, Wrap = 3, OutlineSize = 4, OutlineColor = [.1f, .2f, .3f, 1] }] };
+var restoredTextStyle = DemoVisualCodec.Decode(DemoVisualCodec.Encode(textStyle)).Items[0];
+Check(restoredTextStyle.VerticalAlign == 1 && restoredTextStyle.Wrap == 3 && restoredTextStyle.OutlineSize == 4
+    && restoredTextStyle.OutlineColor.SequenceEqual(textStyle.Items[0].OutlineColor), "Native text alignment, wrapping and outline round trip");
+Check(!DemoVisualCodec.Valid(metadata with { Items = [metadata.Items[0] with { OutlineSize = 999 }] }), "Oversized text outline rejected");
+Check(!DemoVisualCodec.Valid(metadata with { Items = [metadata.Items[0] with { OutlineColor = [0, 0, float.NaN, 1] }] }), "Non-finite outline color rejected");
+Check(!DemoVisualCodec.Valid(metadata with { Items = [metadata.Items[0] with { VerticalAlign = 9 }] }), "Invalid text alignment rejected");
+var cursorOnly = Roundtrip(new DemoRewardMessage { ProtocolVersion = DemoRewardMessage.Protocol, Delta = true,
+    Cursor = new(.2f, .4f), Cards = [], Labels = [], Entries = [] });
+Check(cursorOnly.Delta && cursorOnly.Cards!.Count == 0, "Cursor-only reward update contains no option retransmission");
+Console.WriteLine($"PASS: {assertions} final validated 1.2.2 assertions.");

@@ -19,6 +19,49 @@ tags: [coop, spectator, ui, rewards, godot, dotnet]
 
 # Read-only co-op hand and reward observation in Slay the Spire 2
 
+## Visual-audit correction (2026-10-14)
+
+Later author decision supersedes remote activity support: demo is now combat and
+post-combat rewards only. Identical source/projection fixtures did not establish
+correctness across independent players in randomized event rooms. Deny unsupported
+contexts before serialization, not just before rendering; otherwise a Kind=None
+packet can still carry event card options. Disable activity publishing and reject
+incoming Activity observations. Require a combat-room context for reward screens.
+Combat eyes now share the fixed player-row anchor with reward eyes; native row
+controller focus and five-point rectangular mouse hitboxes are verified in the lab.
+
+Follow-up after the author's screenshot review: the native `NCommonBanner`
+must be treated as a composed installed UI component, not only its captured
+text/texture children. Native rich text has separate bold/italic size keys.
+Source Z values must order primitives within the projection, not move them below
+its backdrop. Reward icons use the native Icon container's reference size.
+`NCard.Size` is zero despite a visible centred card face, so exit-eye layout
+must account for the art footprint. `NTargetManager` targets a creature's VFX
+anchor; the old fixture's arbitrary target above the enemy was not a valid oracle.
+
+The shared observed top bar keeps native local map/settings buttons and opens
+the observed player's deck. A copied HP control needs unique-owner rebinding;
+Gold cannot be copied with lifecycle scripts because GoldPopup belongs outside
+its subtree. Scriptless gold/potion-container displays avoid copying gameplay
+subscriptions. Native unusable potion holders preserve slot visuals. Final
+isolated verification: 87 checks, different friend gold/potions/decks, 59 fresh
+screenshots in a separate directory. No independent Steam-client verification.
+Both merchant variants are now blocked (author-approved fallback); a friend's
+map overlay preserves the preceding activity. See VISUAL_FIXES_1.2.2.md for the
+current candidate; older results below are historical. No community PR opened.
+
+Native node-count/network assertions are not visual parity evidence. Paired native
+screenshots exposed missing map-node icons, merchant scene composition, outer
+tooltip layers and the friend's top bar outside combat. See
+`docs/VISUAL_AUDIT_1.2.2.md`; the visual release gate remains failed.
+Preserve the detached rewards panel's original anchors/offsets (FullRect stretches
+its stone frame). Locale substitution can wrap fonts in runtime FontVariation
+objects with empty resource paths: resolve the installed BaseFont, and transport
+text alignment, wrapping and outline instead of relying on renderer defaults.
+Native upgrade/enchant previews require a source card with a Pile/CardScope;
+owner-only detached display cards are insufficient test fixtures. Use cards from
+the isolated lab deck to open previews, never confirm/apply changes.
+
 Together Demo uses the game's native loader plus Harmony to display detached hand/reward UI, not transfer player control. A real-game synthetic three-player oracle verifies read-only state, own end turn, local death, target switches, and reward exit. Actual Steam co-op remains unverified.
 
 ## Setup
@@ -125,5 +168,41 @@ asserting a fresh glyph. Switching to PlayStation changes native mapping type an
 input-map dictionary; keep that change in-memory in the lab and restore both mapping and type.
 The isolated lab uses native controller-config glyphs and synthetic action events, never OS input.
 Physical controllers and actual Steam Input remain a manual release gate.
+
+## 1.2.2: local UI metadata instead of image streaming
+
+1. **Hand at the origin after exit:** replaying `NPlayerHand.AnimIn` changes root geometry,
+   not just opacity. Refresh its native layout and preserve its root transform; apply a
+   mod-owned alpha transition only. Test a nonzero hand position, not just the usual scene.
+2. **Stale rightmost reward focus:** nested holder/hitbox iteration is not option order.
+   Match `NGridCardHolder.CardModel` to the offered models. Send normalized cursor/layout
+   anchors and compute mouse hover on the observer; use model-mapped focus only in controller mode.
+3. **Live reward factories are not display factories:** `Reward.FromSerializable` can add
+   cards, populate rewards or consume RNG. Use display-only DTOs. Detach the unready native
+   reward-window branch and populate `NRewardButton` controls without live Reward objects.
+   FullRect layout avoids a misplaced native ribbon/scrollbar. Never add the scripted screen root.
+4. **Prediction fog is not a Visible flag:** the native `NCrystalSphereMask` uses a shader
+   with 121 `gridFadeParams`. Underlying item sprites remain visible in the tree. Omit wholly
+   hidden item identities and clip partial item visuals to revealed cells. Preserve shader
+   parameters with their types, including PackedVector3/4 and Color arrays.
+5. **Text/atlas appearance:** generic RichTextLabel shows native gold/sine/fly tags literally.
+   Use the installed MegaRichTextLabel effects with required font overrides and fixed font sizes.
+   Capture AtlasTexture's underlying texture/region even if its own resource path looks usable.
+6. **Avoid repeated workload:** no GPU readback/JPEG in the mod; Brotli DTOs contain only
+   installed asset paths, text, finite geometry and allowed uniforms. Apply changed elements,
+   remove vanished ones and resync periodically. Gate expensive capture on presence; use tiny
+   availability messages otherwise. Retain bounds before decoding and reject private paths,
+   external images, invalid sequences and missing delta bases. Off-window mouse positions must
+   be clamped before publishing to avoid rejecting the sender's own packets.
+7. **Static targeting arrow:** preserve native art, transmit endpoints rather than animated
+   segment transforms, compute the curve locally and cache it until endpoints/resolution change.
+   Do not instantiate native targeting logic on the observer (it can alter native input mode).
+
+Verification: pure packet/metadata tests and an isolated native game with synthetic transport,
+cursor order 0→2→1→0 against stale focus 2, unchanged gameplay checks, native-window screenshots,
+prediction hidden/partial-state checks and measured individual compressed states. Exact results
+and candidate hash are recorded in RELEASE_CANDIDATE.md. Steam transport, PC↔Deck FPS/CPU,
+four players and long sessions remain manual. The projection is not pixel-identical: arbitrary
+GPU/Spine/custom drawing and dynamic map-drawing surfaces are not replicated. No image fallback.
 
 Reference: [Godot input propagation](https://docs.godotengine.org/en/stable/tutorials/inputs/inputevent.html).

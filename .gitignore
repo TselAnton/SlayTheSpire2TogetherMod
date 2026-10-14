@@ -29,3 +29,4 @@ workshop/**/previews/
 mod-uploader.log
 *.log
 src/Sts2Demo/docs/godot/
+src/Sts2Demo/docs/img/

@@ -31,6 +31,8 @@ using MegaCrit.Sts2.Core.Multiplayer.Messages.Game.Sync;
 using MegaCrit.Sts2.Core.Multiplayer.Game.PeerInput;
 using Sts2Demo;
 using Sts2Demo.Networking;
+using Sts2Demo.Core;
+using Sts2Demo.Ui;
 using MegaCrit.Sts2.Core.ControllerInput;
 using MegaCrit.Sts2.Core.ControllerInput.ControllerConfigs;
 using MegaCrit.Sts2.Core.Nodes.CommonUi;
@@ -83,6 +85,8 @@ static class StartLab
             await game.ToSignal(game.GetTree().CreateTimer(1), SceneTreeTimer.SignalName.Timeout);
             SaveManager.Instance.Progress.EnableFtues = false; // In-memory lab profile only.
             game.GetWindow().Size = new(1280, 720);
+            game.GetWindow().Mode = Window.ModeEnum.Windowed;
+            game.GetWindow().Show(); // A minimized laboratory cannot finish GPU asset preloading.
             var players = new[]
             {
                 Player.CreateForNewRun<Ironclad>(UnlockState.all, 1),
@@ -90,10 +94,14 @@ static class StartLab
                 Player.CreateForNewRun<Regent>(UnlockState.all, 3),
             };
             var run = RunState.CreateForNewRun(players, ActModel.GetDefaultList().Select(a => a.ToMutable()).ToList(), [], GameMode.Standard, 0, "DEMOLAB");
+            players[1].Gold = 137; players[2].Gold = 42; // Distinct lab-only header values.
             var net = new LabNetService();
             RunManager.Instance.SetUpTest(run, net, disableCombatStateSync: true, shouldSave: false);
+            players[1].AddPotionInternal(ModelDb.Potion<MegaCrit.Sts2.Core.Models.Potions.WeakPotion>().ToMutable(), 1);
+            players[2].AddPotionInternal(ModelDb.Potion<MegaCrit.Sts2.Core.Models.Potions.StrengthPotion>().ToMutable(), 0);
             RunManager.Instance.GenerateRooms();
-            await PreloadManager.LoadRunAssets(players.Select(p => p.Character));
+            var preload = PreloadManager.LoadRunAssets(players.Select(p => p.Character));
+            await preload.WaitAsync(TimeSpan.FromSeconds(30));
             RunManager.Instance.Launch();
             game.RootSceneContainer.SetCurrentScene(NRun.Create(run));
             await RunManager.Instance.SetActInternal(0);
@@ -125,6 +133,7 @@ public partial class LabOracle : Node
     private bool _skipVerified;
     private bool _switchVerified;
     private bool _rewardSwitchVerified;
+    private bool _hoverFixtureRunning;
     private byte[] _nativeRewards = [];
     private Vector2 _rewardOrigin;
     private Vector2 _rewardSize = Vector2.One;
@@ -151,7 +160,7 @@ public partial class LabOracle : Node
             }).ToList();
             var location = RunManager.Instance.DebugOnlyGetState()!.RunLocation;
             var msg = new DemoHandMessage { ProtocolVersion = DemoHandMessage.Protocol, Sequence = ++_sequence, Location = location, Round = CombatManager.Instance.DebugOnlyGetState()!.RoundNumber, ReferenceSize = new(1920, 1080), Cards = poses,
-                Arrow = NativeArrowPoses(),
+                ArrowVisible = true, ArrowFrom = poses[2].Position, ArrowTo = ArrowEnemyPoint() / new Vector2(1920, 1080),
                 ArrowTintRG = new(1, 1), ArrowTintBA = new(1, 1) };
             Net.Inject(msg, 2);
             Net.Inject(new DemoPresenceMessage { ProtocolVersion = 1, Sequence = _sequence, Location = location, Watching = true, TargetId = 1 }, 2);
@@ -202,10 +211,12 @@ public partial class LabOracle : Node
             int eyes = Descendants<TextureButton>(controller).Count(b => b.Name.ToString().StartsWith("AvatarDemoEye_") && b.Visible);
             bool green = avatarEye.SelfModulate.G > avatarEye.SelfModulate.R;
             bool stable = avatarEye.Scale == Vector2.One && avatarEye.TextureClickMask == null;
-            var creatureTop = NCombatRoom.Instance!.GetCreatureNode(Players[1].Creature)!.GetTopOfHitbox();
-            bool above = avatarEye.GetGlobalRect().End.Y < creatureTop.Y;
-            if (stable && above) Log.Info("[DemoLab] PASS: eye above friend, stable rectangular hitbox.");
-            else Log.Error($"[DemoLab] FAIL: eye stable={stable} above={above}.");
+            var row = Descendants<NMultiplayerPlayerState>(NRun.Instance!.GlobalUi.MultiplayerPlayerContainer).Single(s => s.Player.NetId == 2);
+            var icon = row.GetNode<TextureRect>("%CharacterIcon");
+            bool beside = Math.Abs(avatarEye.GetGlobalRect().GetCenter().Y - icon.GetGlobalRect().GetCenter().Y) < 2
+                && avatarEye.GlobalPosition.X > icon.GetGlobalRect().End.X;
+            if (stable && beside) Log.Info("[DemoLab] PASS: combat eye beside player-list status, stable rectangular hitbox.");
+            else Log.Error($"[DemoLab] FAIL: eye stable={stable} beside={beside}.");
             avatarEye.EmitSignal(BaseButton.SignalName.Pressed);
             if (eyes == 2 && green && !DemoController.IsViewing)
                 Log.Info("[DemoLab] PASS: combat has one eye per friend, one green; pressing green leaves demo.");
@@ -243,7 +254,7 @@ public partial class LabOracle : Node
                 Log.Info("[DemoLab] Entered reward-card observation; three serialized options.");
             }
         }
-        if (_phase is 6 or 7 && now - _lastFrame > 100)
+        if (_phase is 6 or 7 && !_hoverFixtureRunning && now - _lastFrame > 100)
         {
             InjectRewards(now); _lastFrame = now;
             if (_phase == 6)
@@ -258,6 +269,8 @@ public partial class LabOracle : Node
                 else Log.Error("[DemoLab] FAIL: deck changed during reward observation.");
                 _phase = 7;
                 _rewardStarted = now;
+                _hoverFixtureRunning = true;
+                TaskHelper.RunSafely(TestRewardHover());
                 Log.Info("[DemoLab] Ready for screenshot of read-only reward choices.");
                 TaskHelper.RunSafely(Capture("reward-choices"));
             }
@@ -333,8 +346,9 @@ public partial class LabOracle : Node
         {
             Net.Inject(new DemoRewardMessage
             {
-                ProtocolVersion = 1, Sequence = ++_sequence, Location = RunManager.Instance.DebugOnlyGetState()!.RunLocation,
-                Kind = DemoRewardKind.Rewards, Cards = [], Labels = ["20 gold", "Card reward"], Hovered = 1, Chosen = -1,
+                ProtocolVersion = DemoRewardMessage.Protocol, Sequence = ++_sequence, Location = RunManager.Instance.DebugOnlyGetState()!.RunLocation,
+                Entries = Net.PublishedRewards.LastOrDefault(f => f.Kind == DemoRewardKind.Rewards && f.Entries?.Count > 0).Entries,
+                Header = new MegaCrit.Sts2.Core.Localization.LocString("gameplay_ui", "COMBAT_REWARD_HEADER_LOOT").GetFormattedText(), Kind = DemoRewardKind.Rewards, Cards = [], Labels = ["20 gold", "Card reward"], Hovered = 1, Chosen = -1,
             }, 2);
             _lastFrame = now;
             if (!RewardDemoController.IsViewing)
@@ -343,7 +357,7 @@ public partial class LabOracle : Node
                 TaskHelper.RunSafely(Capture("reward-list"));
                 TaskHelper.RunSafely(TestEyeHitbox(RewardDemoController.Current.GetNode<TextureButton>("AvatarDemoEye_2"), "reward-avatar"));
             }
-            if (_nativeRewards.Length > 0) InjectNativeImage(_nativeRewards, _rewardOrigin, _rewardSize);
+            if (_nativeRewards.Length > 0) InjectNativeMetadata(_nativeRewards, _rewardOrigin, _rewardSize);
         }
         if (_phase == 8 && now - _rewardStarted > 2500)
         {
@@ -415,6 +429,7 @@ public partial class LabOracle : Node
 
     private async Task TestControllerCombat()
     {
+        await Capture("combat-source");
         var manager = NControllerManager.Instance!;
         var strategyField = AccessTools.Field(typeof(NControllerManager), "_inputStrategy");
         var originalStrategy = strategyField.GetValue(manager);
@@ -424,10 +439,18 @@ public partial class LabOracle : Node
         var originalMapping = new Dictionary<StringName, StringName>(mapping);
         try
         {
+            Net.PublishedHands.Clear(); Net.PublishedScreens.Clear(); Net.PublishedRewards.Clear();
+            await ToSignal(GetTree().CreateTimer(.25), SceneTreeTimer.SignalName.Timeout);
+            if (Net.PublishedHands.Count == 0 && Net.PublishedScreens.Count == 0
+                && Net.PublishedRewards.All(m => m.Cards?.Count == 0 && m.Entries?.Count == 0))
+                Log.Info("[DemoLab] PASS: no watchers means no hand/scene payload or serialized reward options.");
+            else Log.Error("[DemoLab] FAIL: heavyweight metadata published without watchers.");
             strategyField.SetValue(manager, new LabControllerStrategy(new XboxOneConfig()));
             modeProperty.SetValue(manager, true); // No OS mouse warp or hardware takeover.
             mapping.Clear(); foreach (var item in new XboxOneConfig().DefaultControllerInputMap) mapping.Add(item.Key, item.Value);
-            var friend = NCombatRoom.Instance!.GetCreatureNode(Players[1].Creature)!;
+            var originalHandPosition = NCombatRoom.Instance!.Ui.Hand.Position;
+            NCombatRoom.Instance.Ui.Hand.Position = new(123, 77);
+            var friend = Descendants<NMultiplayerPlayerState>(NRun.Instance!.GlobalUi.MultiplayerPlayerContainer).Single(s => s.Player.NetId == 2);
             friend.Hitbox.GrabFocus();
             await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
             await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame); // UI _Process runs after the frame signal.
@@ -441,7 +464,7 @@ public partial class LabOracle : Node
             await ControllerTap(Controller.faceButtonSouth);
             ControllerCheck(DemoController.ObservedPlayerId == 2 && leaked == 0, "physical A enters once; native hitbox release not triggered");
             ControllerCheck(hint.Texture == NInputManager.Instance!.GetHotkeyIcon(MegaInput.cancel), "active eye changes to native B hint");
-            NCombatRoom.Instance.GetCreatureNode(Players[2].Creature)!.Hitbox.GrabFocus();
+            Descendants<NMultiplayerPlayerState>(NRun.Instance!.GlobalUi.MultiplayerPlayerContainer).Single(s => s.Player.NetId == 3).Hitbox.GrabFocus();
             await ControllerTap(Controller.faceButtonSouth);
             ControllerCheck(DemoController.ObservedPlayerId == 3, "physical A switches to third player");
             int nativeConfirm = 0;
@@ -464,6 +487,8 @@ public partial class LabOracle : Node
             }
             await ControllerTap(Controller.faceButtonEast);
             ControllerCheck(!DemoController.IsViewing && NCombatRoom.Instance.Ui.Hand.Visible, "physical B exits and restores native hand");
+            ControllerCheck(NCombatRoom.Instance.Ui.Hand.Position == new Vector2(123, 77), "exit preserves native hand geometry instead of moving root to zero");
+            NCombatRoom.Instance.Ui.Hand.Position = originalHandPosition;
             friend.Hitbox.GrabFocus();
             mapping[MegaInput.select] = Controller.faceButtonWest; mapping[MegaInput.topPanel] = Controller.faceButtonSouth;
             mapping[MegaInput.cancel] = Controller.rightBumper; mapping[MegaInput.viewExhaustPileAndTabRight] = Controller.faceButtonEast;
@@ -616,9 +641,31 @@ public partial class LabOracle : Node
     private async Task Capture(string name)
     {
         await ToSignal(GetTree().CreateTimer(.5), SceneTreeTimer.SignalName.Timeout);
-        string path = Path.Combine(Path.GetDirectoryName(OS.GetExecutablePath())!, "..", $"lab-{name}.png");
+        string directory = Path.Combine(Path.GetDirectoryName(OS.GetExecutablePath())!, "..", "combat-rewards-only-1.2.2");
+        Directory.CreateDirectory(directory);
+        string path = Path.Combine(directory, $"lab-{name}.png");
         GetViewport().GetTexture().GetImage().SavePng(path);
         Log.Info($"[DemoLab] Screenshot saved: {name}.");
+    }
+    private async Task TestRewardHover()
+    {
+        try
+        {
+            var anchors = new List<Vector2> { new(.3f, .5f), new(.5f, .5f), new(.7f, .5f) };
+            foreach (int i in new[] { 0, 2, 1, 0 })
+            {
+                Net.Inject(new DemoRewardMessage { ProtocolVersion = DemoRewardMessage.Protocol, Sequence = ++_sequence,
+                    Location = RunManager.Instance.DebugOnlyGetState()!.RunLocation, Kind = DemoRewardKind.CardChoice,
+                    Cards = _rewardCards, Labels = ["Пропустить"], Centers = anchors, Cursor = anchors[i],
+                    Controller = false, Hovered = 2, Chosen = -1 }, 2); // Deliberately stale focus on the right card.
+                await ToSignal(GetTree().CreateTimer(.2), SceneTreeTimer.SignalName.Timeout);
+                var cards = Descendants<NCard>(RewardDemoController.Current!.GetNode("ReadOnlyRewards")).ToList();
+                if (cards.Count == 3 && cards[i].ZIndex == 20 && cards.Where((_, n) => n != i).All(c => c.ZIndex != 20))
+                    Log.Info($"[DemoLab] PASS: client cursor selects reward card {i}, ignoring stale rightmost focus.");
+                else Log.Error($"[DemoLab] FAIL: client cursor reward selection {i}.");
+            }
+        }
+        finally { _hoverFixtureRunning = false; }
     }
     private async Task FinishForRewards()
     {
@@ -630,6 +677,7 @@ public partial class LabOracle : Node
             await NGame.Instance!.ToSignal(NGame.Instance.GetTree().CreateTimer(3), SceneTreeTimer.SignalName.Timeout);
             var published = await CapturePublishedFrame();
             _nativeRewards = published.Data; _rewardOrigin = published.Origin; _rewardSize = published.Size;
+            await Capture("reward-list-source");
             foreach (var model in ModelDb.AllCards.Where(c => c.Pool == Players[1].Character.CardPool).Take(3))
             {
                 var detached = model.ToMutable(); detached.Owner = Players[1];
@@ -653,23 +701,34 @@ public partial class LabOracle : Node
         var location = RunManager.Instance.DebugOnlyGetState()!.RunLocation;
         Net.Inject(new DemoRewardMessage
         {
-            ProtocolVersion = 1, Sequence = ++_sequence, Location = location, Kind = DemoRewardKind.CardChoice,
+            ProtocolVersion = DemoRewardMessage.Protocol, Sequence = ++_sequence, Location = location, Kind = DemoRewardKind.CardChoice,
+            Cursor = new(.5f, .5f),
             Cards = _rewardCards, Labels = ["Пропустить"], Hovered = 1,
             Chosen = _rewardStarted == 0 || now - _rewardStarted < 3500 ? -1 : now - _rewardStarted < 5000 ? 1 : _rewardCards.Count,
         }, 2);
         Net.Inject(new PeerInputMessage { screenType = NetScreenType.CardSelection, netMousePos = new(0, .1f) }, 2);
         Net.Inject(new DemoRewardMessage
         {
-            ProtocolVersion = 1, Sequence = _sequence, Location = location, Kind = DemoRewardKind.CardChoice,
+            ProtocolVersion = DemoRewardMessage.Protocol, Sequence = _sequence, Location = location, Kind = DemoRewardKind.CardChoice,
+            Cursor = new(.32f, .5f),
             Cards = _thirdRewardCards, Labels = ["Пропустить"], Hovered = 0, Chosen = -1,
         }, 3);
     }
     private static int CountMirrors() => DemoController.Current!.GetNode("DemoView/ReadOnlyHand").GetChildCount();
-    private byte[] CaptureJpeg()
+    private byte[] CaptureMetadata()
     {
-        using var image = GetViewport().GetTexture().GetImage();
-        image.Resize(1280, 720);
-        return image.SaveJpgToBuffer(.88f);
+        var root = MegaCrit.Sts2.Core.Nodes.Screens.ScreenContext.ActiveScreenContext.Instance.GetCurrentScreen() as Node
+            ?? throw new Exception("No native screen node");
+        var size = GetViewport().GetVisibleRect().Size;
+        return DemoVisualCodec.Encode(new DemoVisualUpdate { Full = true, Screen = root.GetType().Name,
+            Reference = [size.X, size.Y], Items = DemoVisualProjection.Capture(root, Transform2D.Identity) });
+    }
+    private Vector2 ArrowEnemyPoint()
+    {
+        var enemy = Descendants<MegaCrit.Sts2.Core.Nodes.Combat.NCreature>(NCombatRoom.Instance!)
+            .First(c => !Players.Any(p => p.Creature == c.Entity));
+        // NTargetManager uses the creature's VFX anchor, not an arbitrary point above it.
+        return enemy.VfxSpawnPosition;
     }
     private List<DemoCardPose> NativeArrowPoses()
     {
@@ -683,7 +742,7 @@ public partial class LabOracle : Node
         int count = Players[1].PlayerCombatState?.Hand.Cards.Count ?? 7;
         var selectedCentre = new Vector2((.5f + (2 - (count - 1) / 2f) * .085f) * 1920, .68f * 1080);
         AccessTools.Field(type, "_fromPos").SetValue(_referenceArrow, selectedCentre);
-        AccessTools.Method(type, "UpdateArrowPosition").Invoke(_referenceArrow, [new Vector2(1500, 500)]);
+        AccessTools.Method(type, "UpdateArrowPosition").Invoke(_referenceArrow, [ArrowEnemyPoint()]);
         return _referenceArrow.GetChildren().OfType<Sprite2D>().Select((part, i) => new DemoCardPose {
             CardId = (uint)i, Position = part.Position / new Vector2(1920, 1080), Scale = part.Scale, Rotation = part.Rotation }).ToList();
     }
@@ -691,7 +750,7 @@ public partial class LabOracle : Node
     {
         await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
         var arrow = DemoController.Current!.GetNode<Node2D>("DemoView/DemoTargetingArrow");
-        var expected = NativeArrowPoses();
+        var expected = DemoArrowLayout.Build(new((.5f + (2 - (Players[1].PlayerCombatState!.Hand.Cards.Count - 1) / 2f) * .085f) * 1920, .68f * 1080), ArrowEnemyPoint(), new(1920, 1080));
         bool exact = arrow.Visible && arrow.GetChildCount() == expected.Count;
         var size = DemoController.Current.Ui.Size;
         for (int i = 0; i < expected.Count && exact; i++)
@@ -700,12 +759,13 @@ public partial class LabOracle : Node
             exact &= part.Position.DistanceTo(expected[i].Position * size) < .1f && part.Scale == expected[i].Scale
                 && Math.Abs(part.Rotation - expected[i].Rotation) < .001f;
         }
-        if (exact) Log.Info("[DemoLab] PASS: all 20 arrow transforms match the real native targeting renderer, including curve, tip and segment sizes.");
+        if (exact) Log.Info("[DemoLab] PASS: native-art arrow is locally rendered with 20 static transforms, fixed head scale and no elastic animation.");
         else Log.Error($"[DemoLab] FAIL: native arrow mismatch; visible={arrow.Visible} children={arrow.GetChildCount()} target={DemoController.ObservedPlayerId}.");
     }
     private async Task CheckArrowThenDeath()
     {
         await CheckNativeArrow();
+        await Capture("combat-arrow");
         await TestDeadObserver();
     }
     private async Task CheckExitFade(bool started)
@@ -716,7 +776,7 @@ public partial class LabOracle : Node
         if (started && finished) Log.Info("[DemoLab] PASS: exit crossfade starts with local hand transparent, finishes with full alpha and no leftover foreign cards.");
         else Log.Error($"[DemoLab] FAIL: exit fade started={started} finished={finished}.");
     }
-    private void InjectNativeImage(byte[] data, Vector2? origin = null, Vector2? size = null)
+    private void InjectNativeMetadata(byte[] data, Vector2? origin = null, Vector2? size = null)
     {
         uint sequence = ++_sequence;
         byte count = (byte)((data.Length + DemoScreenMessage.ChunkBytes - 1) / DemoScreenMessage.ChunkBytes);
@@ -731,7 +791,7 @@ public partial class LabOracle : Node
     }
     private void InjectActivity()
     {
-        Net.Inject(new DemoRewardMessage { ProtocolVersion = 1, Sequence = ++_sequence,
+        Net.Inject(new DemoRewardMessage { ProtocolVersion = DemoRewardMessage.Protocol, Sequence = ++_sequence,
             Location = RunManager.Instance.DebugOnlyGetState()!.RunLocation, Kind = DemoRewardKind.Activity,
             Cards = [], Labels = [], Hovered = -1, Chosen = -1 }, 2);
     }
@@ -740,84 +800,77 @@ public partial class LabOracle : Node
         try
         {
             var controller = RewardDemoController.Current!;
+            async Task Blocked(string name)
+            {
+                Net.PublishedScreens.Clear(); Net.PublishedRewards.Clear();
+                Net.Inject(new DemoPresenceMessage { ProtocolVersion = 1, Sequence = ++_sequence,
+                    Location = RunManager.Instance.DebugOnlyGetState()!.RunLocation, Watching = true, TargetId = 1 }, 2);
+                await ToSignal(GetTree().CreateTimer(1.2), SceneTreeTimer.SignalName.Timeout);
+                Net.Inject(new DemoRewardMessage { ProtocolVersion = DemoRewardMessage.Protocol, Sequence = ++_sequence,
+                    Location = RunManager.Instance.DebugOnlyGetState()!.RunLocation, Kind = DemoRewardKind.Rewards,
+                    Cards = [], Labels = [], Entries = [], Hovered = -1, Chosen = -1 }, 2);
+                bool entered = controller.Enter(2);
+                bool eyes = Descendants<TextureButton>(controller).Any(b => b.Name.ToString().StartsWith("AvatarDemoEye_") && b.IsVisibleInTree());
+                bool clean = !RewardDemoController.IsViewing && !entered && !eyes && Net.PublishedScreens.Count == 0
+                    && Net.PublishedRewards.All(m => m.Kind == DemoRewardKind.None);
+                if (clean) Log.Info("[DemoLab] PASS: blocked " + name + "; no entry eyes or activity traffic.");
+                else Log.Error("[DemoLab] FAIL: blocked " + name + " entry=" + entered + " eyes=" + eyes);
+                await Capture("restricted-" + name);
+            }
+            // Preserve the separate reward-card hover/upgrade tests before testing denied rooms.
+            await AuditRewardCards();
+            controller.Exit();
             if (_localChoice != null && _localChoice.IsInsideTree()) NOverlayStack.Instance!.Remove(_localChoice);
+            Net.Inject(new DemoRewardMessage { ProtocolVersion = DemoRewardMessage.Protocol, Sequence = ++_sequence,
+                Location = RunManager.Instance.DebugOnlyGetState()!.RunLocation, Kind = DemoRewardKind.Rewards,
+                Cards = [], Labels = [], Entries = [], Hovered = -1, Chosen = -1 }, 2);
+            if (!controller.Enter(2)) throw new Exception("Cannot establish reward observation before forbidden-screen transition.");
             var entity = new MegaCrit.Sts2.Core.Events.Custom.CrystalSphereEvent.CrystalSphereMinigame(Players[0], new MegaCrit.Sts2.Core.Random.Rng(42), 3);
             var predictions = MegaCrit.Sts2.Core.Nodes.Events.Custom.CrystalSphere.NCrystalSphereScreen.ShowScreen(entity);
-            await ToSignal(GetTree().CreateTimer(1), SceneTreeTimer.SignalName.Timeout);
-            await ToSignal(RenderingServer.Singleton, RenderingServer.SignalName.FramePostDraw);
-            var published = await CapturePublishedFrame();
-            var pixels = published.Data;
-            InjectActivity();
-            bool entered = controller.Enter(2);
-            InjectNativeImage(pixels, published.Origin, published.Size);
-            var image = Descendants<TextureRect>(controller.GetNode("ReadOnlyRewards")).Single(t => t.Name == "NativeFriendScreen");
-            int cells = Descendants<MegaCrit.Sts2.Core.Nodes.Events.Custom.CrystalSphere.NCrystalSphereCell>(predictions).Count();
-            Vector2 point = GetViewport().GetVisibleRect().Size / 2;
-            GetViewport().PushInput(new InputEventMouseButton { Position = point, ButtonIndex = MouseButton.Left, Pressed = true }, true);
-            GetViewport().PushInput(new InputEventMouseButton { Position = point, ButtonIndex = MouseButton.Left, Pressed = false }, true);
-            if (entered && image.Texture != null && cells == 121 && entity.DivinationCount == 3)
-                Log.Info("[DemoLab] PASS: native predictions UI with all 121 cells mirrored through chunked JPEG; observer click did not use divination.");
-            else Log.Error($"[DemoLab] FAIL: predictions entered={entered} texture={image.Texture != null} cells={cells} count={entity.DivinationCount}.");
-            await Capture("predictions");
-            controller.Exit(); NOverlayStack.Instance!.Remove(predictions); entity.ForceMinigameEnd();
-            NRun.Instance!.GlobalUi.MapScreen.Open();
-            await ToSignal(GetTree().CreateTimer(.4), SceneTreeTimer.SignalName.Timeout);
-            InjectActivity(); bool map = controller.Enter(2); InjectNativeImage(CaptureJpeg());
-            if (map) Log.Info("[DemoLab] PASS: native map is available for read-only observation.");
-            else Log.Error("[DemoLab] FAIL: map observer unavailable.");
-            controller.Exit(); NRun.Instance.GlobalUi.MapScreen.Close();
-            await RunManager.Instance.EnterRoomDebug(RoomType.Shop, showTransition: false);
-            NRun.Instance.MerchantRoom!.Inventory.Open();
-            await ToSignal(GetTree().CreateTimer(.8), SceneTreeTimer.SignalName.Timeout);
-            published = await CapturePublishedFrame();
-            int gold = Players[0].Gold;
-            InjectActivity(); bool shop = controller.Enter(2); InjectNativeImage(published.Data, published.Origin, published.Size);
-            Vector2 shopPoint = GetViewport().GetVisibleRect().Size * new Vector2(.4f, .4f);
-            GetViewport().PushInput(new InputEventMouseButton { Position = shopPoint, ButtonIndex = MouseButton.Left, Pressed = true }, true);
-            GetViewport().PushInput(new InputEventMouseButton { Position = shopPoint, ButtonIndex = MouseButton.Left, Pressed = false }, true);
-            if (shop && Players[0].Gold == gold) Log.Info("[DemoLab] PASS: full native shop mirrored without buying, removing cards or spending gold.");
-            else Log.Error("[DemoLab] FAIL: shop observation unavailable or changed gold.");
-            await Capture("shop");
-            controller.Exit();
+            await Blocked("predictions");
+            NOverlayStack.Instance!.Remove(predictions); entity.ForceMinigameEnd();
             await RunManager.Instance.EnterRoomDebug(RoomType.Event, model: ModelDb.Event<MegaCrit.Sts2.Core.Models.Events.CrystalSphere>(), showTransition: false);
-            await ToSignal(GetTree().CreateTimer(.8), SceneTreeTimer.SignalName.Timeout);
-            published = await CapturePublishedFrame();
-            InjectActivity(); bool eventView = controller.Enter(2); InjectNativeImage(published.Data, published.Origin, published.Size);
-            if (eventView) Log.Info("[DemoLab] PASS: native event description, illustration and option controls mirrored.");
-            else Log.Error("[DemoLab] FAIL: native event observer unavailable.");
-            await Capture("event");
-            var relicScreen = MegaCrit.Sts2.Core.Nodes.Screens.NChooseARelicSelection.ShowScreen(ModelDb.AllRelics.Take(3).ToList());
-            await ToSignal(GetTree().CreateTimer(.3), SceneTreeTimer.SignalName.Timeout);
-            if (!controller.Enter(2) && !RewardDemoController.IsViewing)
-                Log.Info("[DemoLab] PASS: native relic choice outside a rest site auto-closes and refuses demo.");
-            else Log.Error("[DemoLab] FAIL: relic choice allowed demo.");
-            if (relicScreen != null) NOverlayStack.Instance!.Remove(relicScreen);
-            InjectActivity(); controller.Enter(2);
-            // Enter the prohibited room while still watching: this also tests auto-close.
+            await Blocked("event-dialogue");
+            await RunManager.Instance.EnterRoomDebug(RoomType.Shop, showTransition: false);
+            await Blocked("merchant-room");
+            NRun.Instance!.MerchantRoom!.Inventory.Open();
+            await Blocked("merchant-inventory");
+            await RunManager.Instance.EnterRoomDebug(RoomType.Event, model: ModelDb.Event<MegaCrit.Sts2.Core.Models.Events.FakeMerchant>(), showTransition: false);
+            await Blocked("fake-merchant");
             await RunManager.Instance.EnterRoomDebug(RoomType.RestSite, showTransition: false);
-            await ToSignal(GetTree().CreateTimer(.3), SceneTreeTimer.SignalName.Timeout);
-            InjectActivity(); bool rest = controller.Enter(2);
-            bool eyes = Descendants<TextureButton>(controller).Any(t => t.Name.ToString().StartsWith("AvatarDemoEye_") && t.IsVisibleInTree());
-            if (!rest && !eyes && !RewardDemoController.IsViewing) Log.Info("[DemoLab] PASS: entering rest site auto-closes demo, refuses observation and hides all entry eyes.");
-            else Log.Error($"[DemoLab] FAIL: rest-site guard entered={rest} eyes={eyes}.");
-            Log.Info("[DemoLab] 1.2.0 LAB FINISHED.");
+            await Blocked("rest-site");
+            Log.Info("[DemoLab] 1.2.2 LAB FINISHED.");
         }
-        catch (Exception e) { Log.Error($"[DemoLab] NATIVE ACTIVITIES FAILED: {e}"); }
+        catch (Exception e) { Log.Error("[DemoLab] RESTRICTED MODES FAILED: " + e); }
     }
     private async Task<(byte[] Data, Vector2 Origin, Vector2 Size)> CapturePublishedFrame()
     {
-        Net.PublishedScreens.Clear();
+        Net.PublishedScreens.Clear(); Net.PublishedRewards.Clear();
+        Net.Inject(new DemoPresenceMessage { ProtocolVersion = 1, Sequence = ++_sequence,
+            Location = RunManager.Instance.DebugOnlyGetState()!.RunLocation, Watching = false, TargetId = 1 }, 2);
         Net.Inject(new DemoPresenceMessage { ProtocolVersion = 1, Sequence = ++_sequence,
             Location = RunManager.Instance.DebugOnlyGetState()!.RunLocation, Watching = true, TargetId = 1 }, 2);
         await ToSignal(GetTree().CreateTimer(.8), SceneTreeTimer.SignalName.Timeout);
-        if (Net.PublishedScreens.Count == 0) throw new Exception("Production native UI publisher did not send a frame.");
-        uint sequence = Net.PublishedScreens.Max(m => m.Sequence);
-        var fragments = Net.PublishedScreens.Where(m => m.Sequence == sequence).OrderBy(m => m.Index).ToArray();
-        if (fragments.Length != fragments[0].Count) throw new Exception("Production native UI frame incomplete.");
-        var bytes = fragments.SelectMany(m => m.Data!).ToArray();
-        if (!Sts2Demo.Core.DemoScreenAssembly.SafeJpeg(bytes)) throw new Exception("Production JPEG validation failed.");
-        Log.Info($"[DemoLab] PASS: production UI publisher sent bounded native frame ({bytes.Length} bytes, {fragments.Length} fragments, rect {fragments[0].ImageOrigin}/{fragments[0].ImageSize}).");
-        return (bytes, fragments[0].ImageOrigin, fragments[0].ImageSize);
+        if (MegaCrit.Sts2.Core.Nodes.Screens.ScreenContext.ActiveScreenContext.Instance.GetCurrentScreen() is MegaCrit.Sts2.Core.Nodes.Screens.NRewardsScreen)
+        {
+            var rewards = Net.PublishedRewards.LastOrDefault(m => m.Kind == DemoRewardKind.Rewards && m.Entries?.Count > 0);
+            if (rewards.Entries?.Count > 0 && Net.PublishedScreens.Count == 0)
+                Log.Info($"[DemoLab] PASS: rewards publisher sent {rewards.Entries.Count} typed descriptions/icons, zero screen-image packets.");
+            else throw new Exception("Native typed reward metadata missing or screen packets leaked");
+            return ([], Vector2.Zero, Vector2.One);
+        }
+        if (Net.PublishedScreens.Count == 0) throw new Exception("Production metadata publisher did not send a state.");
+        foreach (var group in Net.PublishedScreens.GroupBy(m => m.Sequence).OrderBy(g => g.Key))
+        {
+            var fragments = group.OrderBy(m => m.Index).ToArray();
+            if (fragments.Length != fragments[0].Count) continue;
+            var bytes = fragments.SelectMany(m => m.Data!).ToArray();
+            var state = DemoVisualCodec.Decode(bytes);
+            if (!state.Full) continue;
+            Log.Info($"[DemoLab] PASS: UI publisher sent {bytes.Length} bytes of metadata for {state.Items.Count} local visuals; no JPEG.");
+            return (bytes, Vector2.Zero, Vector2.One);
+        }
+        throw new Exception("Metadata keyframe missing.");
     }
     private string Fingerprint() => string.Join(";", Players.Select(p =>
         $"{p.NetId}:{p.Creature.CurrentHp}:{p.Creature.Block}:{p.PlayerCombatState!.Energy}:" +
@@ -831,6 +884,8 @@ public partial class LabOracle : Node
 public class LabNetService : INetGameService
 {
     public readonly List<DemoScreenMessage> PublishedScreens = [];
+    public readonly List<DemoRewardMessage> PublishedRewards = [];
+    public readonly List<DemoHandMessage> PublishedHands = [];
     private readonly Dictionary<Type, List<Delegate>> _handlers = [];
     public ulong NetId => 1;
     public bool IsConnected => true;
@@ -841,6 +896,14 @@ public class LabNetService : INetGameService
     public void SendMessage<T>(T message, ulong playerId) where T : INetMessage { }
     public void SendMessage<T>(T message) where T : INetMessage
     {
+        if (message is DemoHandMessage hand) { PublishedHands.Add(hand); if (PublishedHands.Count > 128) PublishedHands.RemoveAt(0); return; }
+        if (message is DemoRewardMessage rewards)
+        {
+            var rewardWriter = new PacketWriter { WarnOnGrow = false }; rewards.Serialize(rewardWriter);
+            var rewardReader = new PacketReader(); rewardReader.Reset(rewardWriter.Buffer.AsSpan(0, rewardWriter.BytePosition).ToArray());
+            var rewardCopy = new DemoRewardMessage(); rewardCopy.Deserialize(rewardReader);
+            PublishedRewards.Add(rewardCopy); if (PublishedRewards.Count > 128) PublishedRewards.RemoveAt(0); return;
+        }
         if (message is not DemoScreenMessage frame) return;
         var writer = new PacketWriter { WarnOnGrow = false }; frame.Serialize(writer);
         var reader = new PacketReader(); reader.Reset(writer.Buffer.AsSpan(0, writer.BytePosition).ToArray());

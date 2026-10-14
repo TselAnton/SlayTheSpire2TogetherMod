@@ -13,7 +13,7 @@ namespace Sts2Demo;
 public static class ModEntry
 {
     public const string Id = "Sts2Demo";
-    public const string Version = "1.2.1";
+    public const string Version = "1.2.2";
     internal static bool Initialized { get; private set; }
     public static void Initialize()
     {
