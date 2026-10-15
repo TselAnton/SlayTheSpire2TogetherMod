@@ -1,10 +1,12 @@
-# Friend View 1.3.1
+# Friend View 1.4.0
 
-Observe a friend's co-op play in Slay the Spire 2: combat, reward choices, shops, dialogue, predictions, rest sites, treasure, relic choices and supported card screens. All players need matching game and mod versions. Build target: v0.107.1, Godot 4.5.1 / .NET 9.
+Observe a friend's co-op play in Slay the Spire 2: combat, reward choices, shops, dialogue, predictions, rest sites, relic choices outside treasure rooms and supported card screens. All players need matching game and mod versions. Build target: v0.107.1, Godot 4.5.1 / .NET 9.
 
-Click a friend in the left player list to observe. If DEMO is inactive and unavailable, the original player-details action is preserved. Click again or use Esc / native controller cancel to return. The Friend View settings tab offers separate small eye buttons instead of default player-row entry, and all supported activities instead of legacy combat/rewards only. Eyes show/hide together: purple means loading, green means active, disabled means unavailable.
+Use the small eye beside a friend to observe. Click it again or click the observed avatar to exit. Disable the separate button to enter through player avatars; unavailable inactive observation preserves normal player details. Eyes appear together, turn purple while loading, green while active, and disable when unavailable. Scene fades cover them.
 
-Settings use native right-hand checkboxes with English/Russian captions and hover/focus descriptions. **Show Friend View Button** enables separate eyes. **Battle and Rewards Only** restricts supported activities. Both are off by default.
+The native Friend View settings tab has five English/Russian options, all on by default: Show Friend View Button; Exit When All Turns End; Auto Watch After My Turn; Exit When Room Is Complete; Follow Combat Interactions. Hover/focus descriptions explain each option. Existing button choices are preserved; the old battle-only setting is removed.
+
+Native watched-player health, block, powers, Osty, stars and orbs are displayed. Intent damage, stolen cards and target-aware card previews use the watched perspective. Cross observation publishes each player's underlying own screen. Pile/deck inspection is independent; Back/Esc closes that inspection first. Settings preserve DEMO. Treasure rooms prohibit DEMO until leaving. Turning Follow Combat off lets you inspect/select mirrored cards locally without playing them.
 
 Controller actions and glyphs follow the game's current remapping. Select enters or switches; cancel exits; confirm previews upgraded reward cards. In combat, confirm still belongs to your own End Turn action. Hints appear to the right of the eye.
 
@@ -20,6 +22,6 @@ The normal profile is used only when Friend View is the sole successfully loaded
 
 ## Validation and credits
 
-Release 1.3.1. The repository's docs/RELEASE_1.3.1.md records actual tests and remaining checks, including real Steam co-op and physical Steam Deck/controller validation.
+Local release candidate 1.4.0; not uploaded. Intermittent pre-logo startup failure has no proven root cause yet. The repository's docs/RELEASE_1.4.0.md records actual tests and remaining checks, including real Steam co-op and physical Steam Deck/controller validation.
 
 Own code: MIT, Anton-PC; developed with OpenAI Codex. Analysis and packaging: Universal Modder and ILSpy; Harmony from the installation and Godot.NET.Sdk. Native loader reference: https://github.com/jiegec/STS2FirstMod. Game resources belong to Mega Crit and are resolved from the installation, never redistributed. No AI-generated in-game art/audio. The existing Workshop cover was generated separately with OpenAI imagegen.

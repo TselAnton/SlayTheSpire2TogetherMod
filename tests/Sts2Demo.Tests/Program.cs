@@ -207,7 +207,8 @@ var cursorOnly = Roundtrip(new DemoRewardMessage { ProtocolVersion = DemoRewardM
 Check(cursorOnly.Delta && cursorOnly.Cards!.Count == 0, "Cursor-only reward update contains no option retransmission");
 Console.WriteLine($"PASS: {assertions} final validated 1.2.2 assertions.");
 
-foreach (var screen in new[] { "NEventRoom", "NMerchantRoom", "NMerchantInventory", "NFakeMerchantInventory", "NCrystalSphereScreen", "NRestSiteRoom", "NTreasureRoom", "NChooseARelicSelection", "NDeckUpgradeSelectScreen", "NMapScreen", "NMapRoom" })
+Check(!DemoScreenPolicy.KnownActivity("NTreasureRoom"), "Treasure is prohibited");
+foreach (var screen in new[] { "NEventRoom", "NMerchantRoom", "NMerchantInventory", "NFakeMerchantInventory", "NCrystalSphereScreen", "NRestSiteRoom", "NChooseARelicSelection", "NDeckUpgradeSelectScreen", "NMapScreen", "NMapRoom" })
     Check(DemoScreenPolicy.Allowed(screen, screen == "NRestSiteRoom", false, allActivities: true), "All-activities allows " + screen);
 Check(!DemoScreenPolicy.Allowed("FutureRoom", false, false, allActivities: true), "Unknown future room fails closed");
 Check(!DemoScreenPolicy.Allowed("NSettingsScreen", false, false, allActivities: true), "Personal settings remain local");
@@ -279,3 +280,8 @@ var additive = metadata with { Items = [metadata.Items[0] with { CanvasMaterial 
 Check(DemoVisualCodec.Decode(DemoVisualCodec.Encode(additive)).Items[0].CanvasMaterial.SequenceEqual(additive.Items[0].CanvasMaterial), "Native additive/flipbook material roundtrip");
 Check(!DemoVisualCodec.Valid(additive with { Items = [additive.Items[0] with { CanvasMaterial = [99, 0, 1, 8, 8, 1] }] }), "Unknown canvas blend mode rejected");
 Console.WriteLine($"PASS: {assertions} final 1.3.1 protocol assertions.");
+
+var completedRoom = Roundtrip(new DemoRewardMessage { ProtocolVersion = DemoRewardMessage.Protocol, RoomComplete = true, Cards = [], Labels = [] });
+Check(completedRoom.RoomComplete, "Room completion wire roundtrip");
+
+Console.WriteLine($"PASS: {assertions} final 1.4.0 protocol assertions.");

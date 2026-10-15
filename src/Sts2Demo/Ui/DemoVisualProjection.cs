@@ -40,7 +40,7 @@ public partial class DemoVisualProjection : Control
         }
         // Native keyword/card/relic tips live in the game's global overlay,
         // outside both the room and inspector. Capture their visible primitives too.
-        if (MegaCrit.Sts2.Core.Nodes.NGame.Instance?.HoverTipsContainer is { } tips) layers.Add(tips);
+        if (!DemoController.IsViewing && !RewardDemoController.IsViewing && MegaCrit.Sts2.Core.Nodes.NGame.Instance?.HoverTipsContainer is { } tips) layers.Add(tips);
         for (int i = 0; i < layers.Count; i++)
             result.AddRange(Capture(layers[i], Transform2D.Identity).Select(v => v with
                 { Id = $"layer{i}/" + v.Id, Z = v.Z + (i + 1) * 134217728 }));
@@ -686,7 +686,7 @@ public partial class DemoVisualProjection : Control
     {
         // The merchant hand is decorative, cursor-driven and has no gameplay state.
         // Do not replay its sampled motion; the watched cursor still identifies the item.
-        if (node is NMerchantHand) yield break;
+        if (node is NMerchantHand || node.GetChildren().Any(child => child is NMerchantHand)) yield break;
         var children = node.GetChildren();
         // Godot renders behind-parent children first (e.g. the dark relic outline).
         // Plain tree traversal incorrectly paints that outline over its icon.

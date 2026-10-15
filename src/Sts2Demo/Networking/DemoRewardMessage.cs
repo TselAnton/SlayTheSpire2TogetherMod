@@ -16,7 +16,7 @@ public sealed record DemoRewardEntry(string Type, string Text, List<DemoVisual> 
 public struct DemoRewardMessage : INetMessage
 {
     public const int MaxOptions = 16;
-    public const byte Protocol = 4;
+    public const byte Protocol = 5;
     public byte ProtocolVersion;
     public uint Sequence;
     public string? Screen;
@@ -29,6 +29,7 @@ public struct DemoRewardMessage : INetMessage
     public Vector2 Cursor;
     public List<Vector2>? Centers;
     public bool Controller;
+    public bool RoomComplete;
     public List<DemoRewardEntry>? Entries;
     public string? Header;
     public bool Delta; // Cursor/selection-only update; keep the prior option descriptions.
@@ -43,7 +44,7 @@ public struct DemoRewardMessage : INetMessage
         // and every icon property, not just the model name and upgrade level.
         var writer = new PacketWriter { WarnOnGrow = false };
         foreach (var card in Cards ?? []) writer.Write(card);
-        return $"{Screen}:{Kind}:{Header}:" + Convert.ToHexString(writer.Buffer.AsSpan(0, writer.BytePosition))
+        return $"{Screen}:{Kind}:{RoomComplete}:{Header}:" + Convert.ToHexString(writer.Buffer.AsSpan(0, writer.BytePosition))
             + JsonSerializer.Serialize(Entries ?? [], DemoVisualCodec.Json)
             + JsonSerializer.Serialize(Labels ?? [], DemoVisualCodec.Json);
     }
@@ -76,7 +77,7 @@ public struct DemoRewardMessage : INetMessage
             if (System.Text.Encoding.UTF8.GetByteCount(json) > 8192) throw new InvalidDataException("Reward metadata too long.");
             writer.WriteString(json);
         }
-        writer.WriteBool(Delta); writer.WriteString(Screen ?? ""); writer.Write(Targeting);
+        writer.WriteBool(Delta); writer.WriteString(Screen ?? ""); writer.Write(Targeting); writer.WriteBool(RoomComplete);
     }
     public void Deserialize(PacketReader reader)
     {
@@ -123,7 +124,7 @@ public struct DemoRewardMessage : INetMessage
                 || !DemoVisualCodec.SafeText(entry.Text) || !DemoVisualCodec.Valid(new DemoVisualUpdate { Items = entry.Icons })) throw new InvalidDataException("Invalid reward entry.");
             Entries.Add(entry);
         }
-        Delta = reader.ReadBool(); Screen = ReadBounded(reader, 160); Targeting = reader.Read<DemoTargetingState>();
+        Delta = reader.ReadBool(); Screen = ReadBounded(reader, 160); Targeting = reader.Read<DemoTargetingState>(); RoomComplete = reader.ReadBool();
     }
     private static string ReadBounded(PacketReader reader, int limit)
     {

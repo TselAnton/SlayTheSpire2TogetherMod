@@ -51,7 +51,10 @@ public partial class DemoController : Control
     private NTopBarHp? _health;
     private NRemoteMouseCursor? _cursor;
     private NEnergyCounter? _energy;
-    private Label _stars = null!;
+    private NStarCounter? _stars;
+    private readonly DemoCombatPerspective _perspective = new();
+    private uint? _localSelected;
+    private bool _wasReady, _autoFollowing, _automaticChange, _allReady;
     private Texture2D? _eye;
     private Tween? _transition;
     private uint _handSequence;
@@ -106,8 +109,6 @@ public partial class DemoController : Control
                 ? "res://images/ui/combat/targeting_arrow_head.png" : "res://images/ui/combat/targeting_arrow_segment.png") };
             _arrow.AddChild(part); _arrowParts.Add(part);
         }
-        _stars = DemoUi.Label("", 24);
-        _demo.AddChild(_stars);
         _relics = new HFlowContainer { Name = "DemoRelics", MouseFilter = MouseFilterEnum.Ignore };
         _demo.AddChild(_relics);
         _powers = new HFlowContainer { Name = "DemoPowers", MouseFilter = MouseFilterEnum.Ignore };
@@ -130,13 +131,19 @@ public partial class DemoController : Control
                 SendPresence();
                 _lastPresence = now;
             }
+            UpdateAutomaticObservation();
             if (!_session.Active) return;
             var target = Target;
+            // Local inspectors own navigation until closed, regardless of which
+            // screen the watched player opens in the meantime.
+            if (DemoTopBar.UtilityOpen && target != null && IsConnected(target.NetId))
+            { _demo.Hide(); if (CombatManager.Instance.IsInProgress) _perspective.Update(target); return; }
             if (target != null && RewardDemoController.Current?.RemoteScreenUnavailable(target.NetId) == true)
             { ExitDemo(); return; }
             if (target != null && DemoSettings.AllActivities && RewardDemoController.Current?.CanObserveActivity(target.NetId) == true)
             {
-                var next = target.NetId; ExitDemo(); RewardDemoController.Current.Enter(next); return;
+                var next = target.NetId;
+                TransferObservation(() => { ExitDemo(); RewardDemoController.Current.Enter(next); }); return;
             }
             if (!CombatManager.Instance.IsInProgress)
             {
@@ -155,6 +162,8 @@ public partial class DemoController : Control
             }
             if (NModalContainer.Instance?.OpenModal != null && !DemoTopBar.UtilityOpen) { ExitDemo(); return; }
             _demo.Visible = !DemoTopBar.UtilityOpen;
+            _perspective.Update(target);
+            if (DemoTopBar.UtilityOpen) return;
             Layout(target);
             // Game animations may attempt to reveal these again during a turn change.
             foreach (var node in _hidden.Keys) if (GodotObject.IsInstanceValid(node)) node.Visible = false;
@@ -218,6 +227,15 @@ public partial class DemoController : Control
         _energy?.QueueFree();
         _energy = NEnergyCounter.Create(player);
         if (_energy != null) { _demo.AddChild(_energy); DemoUi.ReadOnly(_energy); }
+        _stars?.QueueFree();
+        var originalStars = Ui.GetNode<NStarCounter>("%StarCounter");
+        _stars = (NStarCounter)originalStars.Duplicate((int)Node.DuplicateFlags.Scripts);
+        foreach (var child in DemoUi.Descendants<Node>(_stars))
+        { bool unique = child.UniqueNameInOwner; child.Owner = _stars; child.UniqueNameInOwner = unique; }
+        var starIcon = _stars.GetNode<Control>("Icon");
+        if (starIcon.Material != null) starIcon.Material = (Material)starIcon.Material.Duplicate();
+        _demo.AddChild(_stars); _stars.Initialize(player);
+        HideLocal(originalStars);
         HideLocal(Ui.Hand);
         Ui.Hand.DisableControllerNavigation();
         HideLocal(Ui.EnergyCounterContainer);
@@ -239,7 +257,7 @@ public partial class DemoController : Control
         }
         _inventoryKey = "";
         _demo.Visible = true;
-        _demo.Modulate = Colors.Transparent;
+        _demo.Modulate = new Color(1, 1, 1, 0);
         Layout(player);
         RefreshCards(player, Time.GetTicksMsec());
         RefreshInventory(player);
@@ -258,10 +276,19 @@ public partial class DemoController : Control
         node.Visible = false;
     }
 
+    internal void StopAutomaticObservation() { if (!_automaticChange) _autoFollowing = false; }
+    internal void TransferObservation(Action change)
+    {
+        bool previous = _automaticChange; _automaticChange = true;
+        try { change(); } finally { _automaticChange = previous; }
+    }
+
     public void ExitDemo()
     {
         if (!_session.Active && _hidden.Count == 0 && _ghosted.Count == 0) return;
+        StopAutomaticObservation();
         _session.Exit();
+        _perspective.Restore();
         _piles.Restore();
         _transition?.Kill();
         RestoreReturnAnimation();
@@ -312,6 +339,7 @@ public partial class DemoController : Control
         ClearCards(); _arrow.Hide();
         _cursor?.QueueFree(); _cursor = null;
         _energy?.QueueFree(); _energy = null;
+        _stars?.QueueFree(); _stars = null;
         _health?.QueueFree(); _health = null;
     }
 
@@ -329,8 +357,7 @@ public partial class DemoController : Control
         _relics.Position = new(24, 88);
         _relics.Size = new(Math.Max(250, size.X - 260), 100);
         if (_energy != null) _energy.Position = Ui.EnergyCounterContainer.Position;
-        _stars.Position = new(100, size.Y - 145);
-        _stars.Text = state.Stars > 0 || player.Character.ShouldAlwaysShowStarCounter ? $"★ {state.Stars}" : "";
+        if (_stars != null) _stars.GlobalPosition = Ui.GetNode<NStarCounter>("%StarCounter").GlobalPosition;
     }
 
     private void RefreshCards(Player player, ulong now)
@@ -347,6 +374,7 @@ public partial class DemoController : Control
             if (_cards.TryGetValue(id, out var mirror))
             {
                 mirror.Node.Model = display;
+                mirror.Node.SetPreviewTarget(PreviewTarget(player));
                 mirror.Node.UpdateVisuals(PileType.Hand, CardPreviewMode.Normal);
                 continue;
             }
@@ -354,6 +382,7 @@ public partial class DemoController : Control
             if (card == null) continue;
             _hand.AddChild(card);
             DemoUi.ReadOnly(card);
+            card.SetPreviewTarget(PreviewTarget(player));
             card.UpdateVisuals(PileType.Hand, CardPreviewMode.Normal);
             card.Modulate = Colors.White;
             card.Position = new(Ui.Size.X / 2, Ui.Size.Y + 200);
@@ -375,7 +404,7 @@ public partial class DemoController : Control
     {
         bool fresh = _frames.TryGetValue(player.NetId, out var frame) && now - frame.LastSeen < 1500
             && frame.Message.Round == CombatManager.Instance.DebugOnlyGetState()?.RoundNumber && !frame.Message.Suspended;
-        var poses = fresh ? frame!.Message.Cards : null;
+        var poses = fresh && DemoSettings.FollowCombat ? frame!.Message.Cards : null;
         var hover = RunManager.Instance.InputSynchronizer.GetHoveredModelData(player.NetId).hoveredCombatCard;
         int index = 0, count = _cards.Count;
         foreach (var (id, mirror) in _cards)
@@ -383,7 +412,9 @@ public partial class DemoController : Control
             var pose = poses?.FirstOrDefault(p => p.CardId == id);
             bool exact = pose.HasValue && pose.Value.IsValid;
             float offset = index++ - (count - 1) / 2f;
-            bool focused = hover?.CombatCardIndex == id;
+            bool focused = DemoSettings.FollowCombat ? hover?.CombatCardIndex == id
+                : _localSelected == id || new Rect2(mirror.Node.Position - new Vector2(150, 210) * mirror.Node.Scale,
+                    new Vector2(300, 420) * mirror.Node.Scale).HasPoint(GetLocalMousePosition());
             // Card origins are their centres in the game's hand helper, so the
             // baseline is symmetric about the viewport centre, not the left edge.
             var position = exact ? pose!.Value.Position * Ui.Size
@@ -395,28 +426,67 @@ public partial class DemoController : Control
             mirror.Node.Scale = mirror.Node.Scale.Lerp(scale, blend);
             mirror.Node.Rotation = Mathf.LerpAngle(mirror.Node.Rotation, angle, blend);
             mirror.Node.ZIndex = focused ? 50 : exact ? Math.Clamp(pose!.Value.ZIndex, 0, 40) : index;
-            bool selected = exact && pose!.Value.Selected;
+            bool selected = DemoSettings.FollowCombat ? exact && pose!.Value.Selected : _localSelected == id;
             if (selected && _highlighted.Add(id)) mirror.Node.CardHighlight.AnimShow();
             else if (!selected && _highlighted.Remove(id)) mirror.Node.CardHighlight.AnimHide();
         }
     }
 
+    public override void _Input(InputEvent input)
+    {
+        if (!IsViewing || DemoSettings.FollowCombat || DemoTopBar.UtilityOpen) return;
+        if (input is InputEventMouseButton { ButtonIndex: MouseButton.Left, Pressed: true } mouse)
+        {
+            var hit = _cards.OrderByDescending(pair => pair.Value.Node.ZIndex).FirstOrDefault(pair =>
+                new Rect2(pair.Value.Node.Position - new Vector2(150, 210) * pair.Value.Node.Scale,
+                    new Vector2(300, 420) * pair.Value.Node.Scale).HasPoint(GetGlobalTransformWithCanvas().AffineInverse() * mouse.Position));
+            if (hit.Value != null) { _localSelected = _localSelected == hit.Key ? null : hit.Key; GetViewport().SetInputAsHandled(); }
+        }
+    }
+
     private void RefreshInventory(Player player)
     {
-        var key = string.Join("|", player.Relics.Select(r => $"{r.Id}:{r.ShowCounter}:{r.DisplayAmount}")) + ":"
-            + string.Join("|", player.Creature.Powers.Select(p => $"{p.Id}:{p.DisplayAmount}"));
-        if (key == _inventoryKey) return;
-        _inventoryKey = key;
-        foreach (var child in _relics.GetChildren()) { _relics.RemoveChild(child); child.QueueFree(); }
-        foreach (var child in _powers.GetChildren()) { _powers.RemoveChild(child); child.QueueFree(); }
-        foreach (var power in player.Creature.Powers)
+        // Native creature state displays own powers, block and localized tooltips.
+        _powers.Hide(); _relics.Hide();
+    }
+
+    private MegaCrit.Sts2.Core.Entities.Creatures.Creature? PreviewTarget(Player player)
+    {
+        if (!DemoSettings.FollowCombat)
+            return NCombatRoom.Instance?.CreatureNodes.FirstOrDefault(n => n.Hitbox.GetGlobalRect().HasPoint(GetGlobalMousePosition()))?.Entity;
+        if (!_frames.TryGetValue(player.NetId, out var frame) || Time.GetTicksMsec() - frame.LastSeen > 1500) return null;
+        var target = frame.Message.Targeting;
+        return target.TargetKind == 2 ? NCombatRoom.Instance?.CreatureNodes.FirstOrDefault(n => n.Entity.CombatId == target.TargetId)?.Entity
+            : target.TargetKind == 1 ? RunManager.Instance.DebugOnlyGetState()?.GetPlayer(target.TargetId)?.Creature : null;
+    }
+
+    private void UpdateAutomaticObservation()
+    {
+        var manager = CombatManager.Instance;
+        var players = RunManager.Instance.DebugOnlyGetState()?.Players;
+        var me = players?.FirstOrDefault(p => p.NetId == _net?.NetId);
+        if (!manager.IsInProgress || me?.PlayerCombatState == null) { _wasReady = false; _autoFollowing = false; return; }
+        bool ready = manager.IsPlayerReadyToEndTurn(me);
+        if (!ready) _autoFollowing = false;
+        else if (!_wasReady && DemoSettings.AutoObserve) _autoFollowing = true;
+        _wasReady = ready;
+        bool allReady = manager.AllPlayersReadyToEndTurn() || manager.IsEnemyTurnStarted;
+        bool turnEnded = allReady && !_allReady;
+        if (DemoTopBar.UtilityOpen) return;
+        _allReady = allReady;
+        var next = players!.FirstOrDefault(p => p != me && p.Creature.IsAlive && IsConnected(p.NetId)
+            && manager.IsPartOfPlayerTurn(p) && !manager.IsPlayerReadyToEndTurn(p));
+        _automaticChange = true;
+        try
         {
-            var box = new HBoxContainer { MouseFilter = MouseFilterEnum.Stop };
-            box.TooltipText = DemoUi.Plain(power.Title.GetFormattedText() + "\n" + power.SmartDescription.GetFormattedText());
-            box.AddChild(DemoUi.Icon(power.Icon, new(32, 32)));
-            box.AddChild(DemoUi.Label(power.DisplayAmount.ToString(), 22));
-            _powers.AddChild(box);
+            if (DemoSettings.AutoExitTurn && turnEnded)
+            { ExitDemo(); RewardDemoController.Current?.Exit(); return; }
+            if (!_autoFollowing || !DemoSettings.AutoObserve || next == null) return;
+            var current = Target ?? players.FirstOrDefault(p => p.NetId == RewardDemoController.ObservedPlayerId);
+            if (current != null && !manager.IsPlayerReadyToEndTurn(current) && current.Creature.IsAlive) return;
+            if (RewardDemoController.Current?.CanObserve(next.NetId) == true) EnterDemo(next.NetId);
         }
+        finally { _automaticChange = false; }
     }
 
     private void UpdateCursor(Player target)
@@ -425,7 +495,7 @@ public partial class DemoController : Control
         var input = RunManager.Instance.InputSynchronizer;
         _cursor.SetNextPosition(input.GetControlSpaceFocusPosition(target.NetId, this));
         _cursor.UpdateImage(input.GetMouseDown(target.NetId), MegaCrit.Sts2.Core.Nodes.Screens.Map.DrawingMode.None);
-        _cursor.Visible = input.GetScreenType(target.NetId) == NetScreenType.Room;
+        _cursor.Visible = DemoSettings.FollowCombat && input.GetScreenType(target.NetId) == NetScreenType.Room;
     }
 
     private void SendHand()
@@ -436,14 +506,14 @@ public partial class DemoController : Control
         var cards = new List<DemoCardPose>();
         bool arrowVisible = false; Vector2 arrowFrom = Vector2.Zero, arrowTo = Vector2.Zero;
         var arrowTint = Colors.White;
-        bool suspended = _session.Active || NRun.Instance?.GlobalUi.Overlays.ScreenCount > 0;
+        bool suspended = NRun.Instance?.GlobalUi.Overlays.ScreenCount > 0;
         if (!suspended)
         {
             var inverse = GetGlobalTransformWithCanvas().AffineInverse();
             foreach (var node in DemoUi.Descendants<NCard>(Ui))
             {
                 var model = node.Model;
-                if (!node.IsVisibleInTree() || model?.Owner?.NetId != _net.NetId || model.Pile?.Type != PileType.Hand) continue;
+                if ((!node.IsVisibleInTree() && !_session.Active) || model?.Owner?.NetId != _net.NetId || model.Pile?.Type != PileType.Hand) continue;
                 var transform = inverse * node.GetGlobalTransformWithCanvas();
                 var pose = new DemoCardPose
                 {
@@ -456,7 +526,7 @@ public partial class DemoController : Control
                 if (cards.Count >= DemoHandMessage.MaxCards) break;
             }
         }
-        if (!suspended)
+        if (!suspended && !_session.Active)
         {
             var native = DemoUi.Descendants<NTargetingArrow>(NGame.Instance!).FirstOrDefault(a => a.IsVisibleInTree());
             if (native != null)
@@ -477,7 +547,7 @@ public partial class DemoController : Control
             Round = CombatManager.Instance.DebugOnlyGetState()?.RoundNumber ?? 0,
             Suspended = suspended, ReferenceSize = Ui.Size, Cards = cards,
             ArrowVisible = arrowVisible, ArrowFrom = arrowFrom, ArrowTo = arrowTo, ArrowTintRG = new(arrowTint.R, arrowTint.G), ArrowTintBA = new(arrowTint.B, arrowTint.A),
-            Targeting = suspended ? default : DemoTargeting.Capture(this),
+            Targeting = suspended || _session.Active ? default : DemoTargeting.Capture(this),
         });
     }
 
@@ -525,7 +595,7 @@ public partial class DemoController : Control
 
     private void UpdateArrow(Player target, ulong now)
     {
-        _arrow.Visible = _frames.TryGetValue(target.NetId, out var frame) && now - frame.LastSeen < 500
+        _arrow.Visible = _frames.TryGetValue(target.NetId, out var frame) && DemoSettings.FollowCombat && now - frame.LastSeen < 500
             && !frame.Message.Suspended && frame.Message.Round == CombatManager.Instance.DebugOnlyGetState()?.RoundNumber
             && frame.Message.ArrowVisible;
         if (!_arrow.Visible) return;
@@ -556,7 +626,7 @@ public partial class DemoController : Control
             child.QueueFree();
         }
         _cards.Clear();
-        _highlighted.Clear();
+        _highlighted.Clear(); _localSelected = null;
     }
 
     public override void _ExitTree()

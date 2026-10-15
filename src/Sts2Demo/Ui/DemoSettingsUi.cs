@@ -70,8 +70,10 @@ internal static class DemoSettingsUi
         }
         Row("DemoEntry", "FRIEND_VIEW_BUTTON",
             DemoSettings.SeparateButton, value => DemoSettings.SeparateButton = value);
-        Row("DemoAvailability", "FRIEND_VIEW_BATTLE_ONLY",
-            !DemoSettings.AllActivities, value => DemoSettings.AllActivities = !value);
+        Row("AutoExitTurn", "FRIEND_VIEW_EXIT_TURN", DemoSettings.AutoExitTurn, value => DemoSettings.AutoExitTurn = value);
+        Row("AutoObserve", "FRIEND_VIEW_AUTO", DemoSettings.AutoObserve, value => DemoSettings.AutoObserve = value);
+        Row("AutoExitRoom", "FRIEND_VIEW_EXIT_ROOM", DemoSettings.AutoExitRoom, value => DemoSettings.AutoExitRoom = value);
+        Row("FollowCombat", "FRIEND_VIEW_FOLLOW", DemoSettings.FollowCombat, value => DemoSettings.FollowCombat = value);
         original.GetParent().AddChild(panel);
         void RefreshLanguage()
         {
@@ -108,10 +110,14 @@ internal static class DemoSettingsUi
             ["FRIEND_VIEW_BUTTON_DESCRIPTION"] = russian
                 ? "Включено: небольшая кнопка с глазом рядом с каждым другом. Выключено: нажмите на друга в таблице игроков. Если просмотр недоступен, откроются обычные сведения об игроке."
                 : "On: show a small eye button beside each friend. Off: click the friend in the player list to observe. When observation is unavailable, the normal player-details action is preserved.",
-            ["FRIEND_VIEW_BATTLE_ONLY"] = russian ? "Только бой и награды" : "Battle and Rewards Only",
-            ["FRIEND_VIEW_BATTLE_ONLY_DESCRIPTION"] = russian
-                ? "Включено: просмотр только в бою и на экранах послебоевых наград. Выключено: также доступны магазины, события, гадание, костры и другие поддерживаемые окна. Карта открывается ваша, с общими отметками."
-                : "On: observe combat and post-battle rewards only. Off: also observe shops, events, predictions, rest sites and other supported screens. The map opens your own shared map.",
+            ["FRIEND_VIEW_EXIT_TURN"] = russian ? "Выход после общего хода" : "Exit When All Turns End",
+            ["FRIEND_VIEW_EXIT_TURN_DESCRIPTION"] = russian ? "Закрывать наблюдение, когда все игроки завершили ход." : "Return to your own view when every player has ended their turn.",
+            ["FRIEND_VIEW_AUTO"] = russian ? "Наблюдать после своего хода" : "Auto Watch After My Turn",
+            ["FRIEND_VIEW_AUTO_DESCRIPTION"] = russian ? "После завершения своего хода наблюдать первого ещё играющего друга, затем переключаться к следующему. Ручной выход приостанавливает автоматический просмотр до следующего хода." : "After ending your turn, watch the first friend still playing, then follow the next. Leaving manually pauses automatic viewing until the next turn.",
+            ["FRIEND_VIEW_EXIT_ROOM"] = russian ? "Выход по завершении комнаты" : "Exit When Room Is Complete",
+            ["FRIEND_VIEW_EXIT_ROOM_DESCRIPTION"] = russian ? "Возвращаться к своему экрану, когда другу доступна кнопка Продолжить." : "Return to your screen when the watched player can proceed from the room.",
+            ["FRIEND_VIEW_FOLLOW"] = russian ? "Следовать выбору карт друга" : "Follow Combat Interactions",
+            ["FRIEND_VIEW_FOLLOW_DESCRIPTION"] = russian ? "Следовать наведению и выбору карт друга. Выключите, чтобы самостоятельно рассматривать его руку; разыгранные карты всё равно обновляются." : "Follow your friend's card hover and selection. Turn off to inspect their hand independently; played cards still update.",
         });
     }
 }

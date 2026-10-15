@@ -85,6 +85,12 @@ public partial class LabOracle
             await Capture("patch-rewards-complete");
             if (Descendants<DemoRewardsWindow>(RewardDemoController.Current).Any()) throw new Exception("Empty rewards panel retained");
             if (!Descendants<DemoVisualProjection>(RewardDemoController.Current).Any(p => p.VisualCount > 0)) throw new Exception("Waiting battlefield missing");
+            DemoSettings.AutoExitRoom = true;
+            await ToSignal(GetTree().CreateTimer(.2), SceneTreeTimer.SignalName.Timeout);
+            if (RewardDemoController.IsViewing || RewardDemoController.Current.CanObserve(2)) throw new Exception("Complete room did not exit/disable observation");
+            DemoSettings.AutoExitRoom = false;
+            if (!RewardDemoController.Current.Enter(2)) throw new Exception("Room completion preference cannot be disabled");
+            Log.Info("[DemoLab] PASS 1.4.0: native reward completion is published; automatic room exit and opt-out.");
             DemoSettings.AllActivities = true;
             frame.Kind = DemoRewardKind.Map; frame.Screen = "NMapScreen"; frame.Sequence = ++_sequence;
             Net.Inject(frame, 2);
@@ -98,7 +104,7 @@ public partial class LabOracle
             await Capture("patch-map-avatar-exit");
             Log.Info("[DemoLab] PASS 1.3.1: completed rewards become battlefield in battle-only mode; avatar exits map and restores local screen.");
         }
-        finally { RewardDemoController.Current!.Exit(); complete.SetValue(screen, false); DemoSettings.AllActivities = all; }
+        finally { RewardDemoController.Current!.Exit(); complete.SetValue(screen, false); DemoSettings.AllActivities = all; DemoSettings.AutoExitRoom = false; }
     }
 
     private async Task AuditLocalHover(string name, DemoVisualUpdate state)

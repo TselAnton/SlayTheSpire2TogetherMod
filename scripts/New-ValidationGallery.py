@@ -12,16 +12,20 @@ parser.add_argument("--contacts", action="store_true")
 parser.add_argument("--archive", action="store_true")
 args = parser.parse_args()
 root = Path(__file__).resolve().parents[1]
-folder = root / "artifacts/validation-1.3.1"
+folder = root / "artifacts/validation-1.4.0"
 files = sorted(folder.glob("lab-*.png"))
 run = json.loads((folder / "run.json").read_text(encoding="utf-8-sig"))
 files = [p for p in files if p.stat().st_mtime >= run["started_unix"]]
 pairs = []
 used = set()
+later_sources = set()
 for source in files:
     if not source.stem.endswith("-source"):
         continue
     demo = source.with_name(source.name.replace("-source.png", ".png"))
+    if demo in files and source.stat().st_mtime > demo.stat().st_mtime:
+        later_sources.add(source)
+        continue  # A later fixture reused the source name; never present it as an A/B pair.
     if demo in files:
         name = demo.stem.removeprefix("lab-")
         pairs.append((name, source, demo))
@@ -30,17 +34,17 @@ dll = root / "artifacts/lab/mods/Sts2Demo/Sts2Demo.dll"
 digest = hashlib.sha256(dll.read_bytes()).hexdigest().upper()
 if digest != run["dll_sha256"]:
     raise SystemExit("Lab DLL changed since this run; refusing to label screenshots with an untested hash")
-manifest = {"version": "1.3.1", "dll_sha256": digest, "run": run,
+manifest = {"version": "1.4.0", "dll_sha256": digest, "run": run,
             "method": "Native isolated game, synthetic peers; activity source replayed as sender 2. Not Steam two-client evidence.",
             "images": [{"file": p.name, "sha256": hashlib.sha256(p.read_bytes()).hexdigest(),
                         "modified_unix": p.stat().st_mtime} for p in files]}
 (folder / "screenshots.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
-shutil.copyfile(root / "docs/RELEASE_1.3.1.md", folder / "RELEASE_1.3.1.md")
-parts = ["""<!doctype html><html lang="ru"><meta charset="utf-8"><title>Friend View 1.3.1 — проверка</title>
+shutil.copyfile(root / "docs/RELEASE_1.4.0.md", folder / "RELEASE_1.4.0.md")
+parts = ["""<!doctype html><html lang="ru"><meta charset="utf-8"><title>Friend View 1.4.0 — проверка</title>
 <style>body{background:#111820;color:#ecf1f5;font:16px system-ui;margin:24px}a{color:#8ad8ff}nav{display:flex;gap:14px;flex-wrap:wrap}.pair{display:grid;grid-template-columns:1fr 1fr;gap:12px}figure{margin:0}img{width:100%;height:auto}section{margin:36px 0}figcaption{padding:8px}code{overflow-wrap:anywhere}@media(max-width:800px){.pair{grid-template-columns:1fr}}</style>
-<h1>Friend View 1.3.1 — кадры проверки</h1>
-<p>Слева — исходное штатное окно, справа — DEMO. Кадры сохранены реальной игрой без ретуши. Это изолированный лабораторный запуск с синтетическими участниками: для проверки рендера состояние исходного окна воспроизводится от имени игрока 2. Отдельные кадры reward-owner проверяют разные награды игроков 1, 2 и 3. Галерея не доказывает работу между двумя Steam-клиентами.</p>
-<p>Фазы декоративных анимаций между кадрами различаются. Точные результаты и ограничения — в <a href="RELEASE_1.3.1.md">отчёте RELEASE_1.3.1.md</a>.</p>""",
+<h1>Friend View 1.4.0 — кадры проверки</h1>
+<p>Слева — исходное штатное окно, справа — DEMO. Кадры сохранены реальной игрой без ретуши. Это изолированный лабораторный запуск с синтетическими участниками: для проверки рендера состояние исходного окна воспроизводится от имени игрока 2. В лаборатории четыре персонажа; автоматическое переключение проверяется на штатном наборе готовности. Отдельные кадры reward-owner проверяют разные награды игроков 1, 2 и 3. Галерея не доказывает работу между двумя Steam-клиентами.</p>
+<p>Фазы декоративных анимаций между кадрами различаются. Точные результаты и ограничения — в <a href="RELEASE_1.4.0.md">отчёте RELEASE_1.4.0.md</a>.</p>""",
          f"<p>DLL тестовой копии: <code>{digest}</code>. <a href='screenshots.json'>Хеши и время снимков</a>.</p><nav>"]
 parts.extend(f"<a href='#{html.escape(n)}'>{html.escape(n)}</a>" for n, _, _ in pairs)
 parts.append("</nav>")
@@ -51,7 +55,7 @@ for name, source, demo in pairs:
 parts.append("<h2>Дополнительные сценарии и управление</h2><div class='pair'>")
 for path in files:
     if path not in used:
-        parts.append(figure(path, path.stem.removeprefix("lab-")))
+        parts.append(figure(path, path.stem.removeprefix("lab-") + (" — другой этап прогона, не парное сравнение" if path in later_sources else "")))
 parts.append("</div></html>")
 (folder / "index.html").write_text("\n".join(parts), encoding="utf-8")
 if args.contacts:
@@ -78,13 +82,17 @@ if args.contacts:
                 sheet.paste(im.resize((640, 360)), (col * 640, row * 388 + 28))
         sheet.save(folder / f"extras-{start // 12 + 1:02}.jpg", quality=92)
 if args.archive:
-    with zipfile.ZipFile(root / "dist/FriendView-1.3.1-validation.zip", "w", zipfile.ZIP_DEFLATED) as archive:
-        evidence = files + [folder / name for name in ["index.html", "screenshots.json", "run.json", "lab-current.log", "RELEASE_1.3.1.md"]]
+    with zipfile.ZipFile(root / "dist/FriendView-1.4.0-validation.zip", "w", zipfile.ZIP_DEFLATED) as archive:
+        evidence = files + [folder / name for name in ["index.html", "screenshots.json", "run.json", "lab-current.log", "RELEASE_1.4.0.md"]]
         if (folder / "pre-release-checks.txt").exists():
             evidence.append(folder / "pre-release-checks.txt")
         stress_manifest = folder / "stress-run.json"
         if stress_manifest.exists() and json.loads(stress_manifest.read_text(encoding="utf-8-sig"))["dll_sha256"] == digest:
             evidence.extend([stress_manifest, folder / "lab-stress.log"])
+        startup_manifest = folder / "startup-runs.json"
+        if startup_manifest.exists() and json.loads(startup_manifest.read_text(encoding="utf-8-sig"))["dll_sha256"] == digest:
+            evidence.append(startup_manifest)
+            evidence.extend(folder / result["log"] for result in json.loads(startup_manifest.read_text(encoding="utf-8-sig"))["results"])
         for path in evidence:
             archive.write(path, path.name)
 print(f"Gallery: {folder / 'index.html'}; {len(pairs)} pairs; {len(files)} screenshots")

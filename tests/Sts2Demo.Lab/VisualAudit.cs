@@ -30,11 +30,11 @@ public partial class LabOracle
         manager.GetNode<MegaCrit.Sts2.Core.Nodes.Screens.Settings.NSettingsTab>("FriendView").ForceTabPressed();
         await Capture("settings");
         var toggles = Descendants<NTickbox>(settings).Where(t => t.Name == "Toggle").ToList();
-        if (toggles.Count != 2) throw new Exception("Missing mod settings controls");
+        if (toggles.Count != 5) throw new Exception("Missing mod settings controls");
         var layout = Descendants<Control>(settings).Where(c => c.GetPath().ToString().Contains("FriendViewSettings") || c.GetPath().ToString().Contains("ShowMpDrawings"))
             .Select(c => new { Path = c.GetPath().ToString(), Type = c.GetClass().ToString(), Rect = c.GetGlobalRect().ToString(), Local = c.Position.ToString(),
                 H = c.SizeFlagsHorizontal.ToString(), V = c.SizeFlagsVertical.ToString(), A = new[] { c.AnchorLeft, c.AnchorRight }, O = new[] { c.OffsetLeft, c.OffsetRight } });
-        System.IO.File.WriteAllText(System.IO.Path.Combine(System.IO.Path.GetDirectoryName(OS.GetExecutablePath())!, "../validation-1.3.1/settings-layout.json"), System.Text.Json.JsonSerializer.Serialize(layout));
+        System.IO.File.WriteAllText(System.IO.Path.Combine(System.IO.Path.GetDirectoryName(OS.GetExecutablePath())!, "../validation-1.4.0/settings-layout.json"), System.Text.Json.JsonSerializer.Serialize(layout));
         foreach (var toggle in toggles)
         {
             var row = toggle.GetParent<Control>();
@@ -57,13 +57,14 @@ public partial class LabOracle
         finally { MegaCrit.Sts2.Core.Localization.LocManager.Instance.SetLanguage(language); }
         foreach (var toggle in toggles) HarmonyLib.AccessTools.Method(typeof(NTickbox), "OnRelease").Invoke(toggle, null);
         Sts2Demo.Core.DemoSettings.Load();
-        if (Sts2Demo.Core.DemoSettings.SeparateButton || Sts2Demo.Core.DemoSettings.AllActivities)
+        if (Sts2Demo.Core.DemoSettings.SeparateButton || !Sts2Demo.Core.DemoSettings.AllActivities)
             throw new Exception("Mod setting persistence mismatch");
         await Capture("settings-player-combat");
         Sts2Demo.Core.DemoSettings.SeparateButton = true; Sts2Demo.Core.DemoSettings.AllActivities = true;
+        Sts2Demo.Core.DemoSettings.AutoObserve = false; Sts2Demo.Core.DemoSettings.AutoExitTurn = false; Sts2Demo.Core.DemoSettings.AutoExitRoom = false; Sts2Demo.Core.DemoSettings.FollowCombat = true;
         Sts2Demo.Core.DemoSettings.Save();
         NCapstoneContainer.Instance!.Close();
-        Log.Info("[DemoLab] PASS: native settings tab, two options, persistence and restoration.");
+        Log.Info("[DemoLab] PASS: native settings tab, five options, persistence and restoration.");
     }
 
     private async Task AuditHeaderUtilities()
@@ -107,7 +108,7 @@ public partial class LabOracle
         }
         if (name == "treasure" && nativeState.Items.Where(v => v.Kind == 6).Any(v => v.SpinePlayback.Length != 3 || v.SpinePlayback[1] != 0))
             throw new Exception("Closed chest animation lost native pause");
-        System.IO.File.WriteAllText(System.IO.Path.Combine(System.IO.Path.GetDirectoryName(OS.GetExecutablePath())!, "../validation-1.3.1/visuals-" + name + ".json"),
+        System.IO.File.WriteAllText(System.IO.Path.Combine(System.IO.Path.GetDirectoryName(OS.GetExecutablePath())!, "../validation-1.4.0/visuals-" + name + ".json"),
             System.Text.Json.JsonSerializer.Serialize(DemoVisualCodec.Decode(published.Data)));
         if (name is "merchant-inventory" or "choose-relic")
         {
@@ -116,12 +117,12 @@ public partial class LabOracle
                 .Select(n => new { Path = n.GetPath().ToString(), n.ShowBehindParent, n.ZIndex, n.ZAsRelative,
                     Tint = n.Modulate.ToString(), SelfTint = n.SelfModulate.ToString(), n.UseParentMaterial,
                     Shader = (n.Material as ShaderMaterial)?.Shader?.Code });
-            System.IO.File.WriteAllText(System.IO.Path.Combine(System.IO.Path.GetDirectoryName(OS.GetExecutablePath())!, "../validation-1.3.1/relic-draw-" + name + ".json"),
+            System.IO.File.WriteAllText(System.IO.Path.Combine(System.IO.Path.GetDirectoryName(OS.GetExecutablePath())!, "../validation-1.4.0/relic-draw-" + name + ".json"),
                 System.Text.Json.JsonSerializer.Serialize(relicNodes));
         }
         if (name == "predictions")
         {
-            System.IO.File.WriteAllText(System.IO.Path.Combine(System.IO.Path.GetDirectoryName(OS.GetExecutablePath())!, "../validation-1.3.1/prediction-visuals.json"),
+            System.IO.File.WriteAllText(System.IO.Path.Combine(System.IO.Path.GetDirectoryName(OS.GetExecutablePath())!, "../validation-1.4.0/prediction-visuals.json"),
                 System.Text.Json.JsonSerializer.Serialize(DemoVisualCodec.Decode(published.Data).Items.Where(v => v.Id.Contains("DivinationButton"))));
             var nodes = Descendants<Node>(NRun.Instance!).Where(n => n.GetPath().ToString().Contains("DivinationButton"))
                 .Select(n => new { Path = n.GetPath().ToString(), Type = n.GetClass().ToString(),
@@ -129,7 +130,7 @@ public partial class LabOracle
                     Texture = n is TextureRect t ? t.Texture?.ResourcePath : null,
                     Properties = n.GetPropertyList().Select(p => p["name"].AsString()).Where(p => p.Contains("texture") || p.Contains("stretch") || p.Contains("frame") || p.Contains("region"))
                         .ToDictionary(p => p, p => n.Get(p).ToString()) });
-            System.IO.File.WriteAllText(System.IO.Path.Combine(System.IO.Path.GetDirectoryName(OS.GetExecutablePath())!, "../validation-1.3.1/prediction-nodes.json"), System.Text.Json.JsonSerializer.Serialize(nodes));
+            System.IO.File.WriteAllText(System.IO.Path.Combine(System.IO.Path.GetDirectoryName(OS.GetExecutablePath())!, "../validation-1.4.0/prediction-nodes.json"), System.Text.Json.JsonSerializer.Serialize(nodes));
         }
         var elapsed = new List<double>();
         for (int sample = 0; sample < 5; sample++)
@@ -145,13 +146,13 @@ public partial class LabOracle
                 Font = n is Label l ? l.GetThemeFontSize("font_size") : 0, Material = (n as CanvasItem)?.Material?.ResourcePath,
                 Size = (n as Control)?.Size.ToString(), Texture = (n as TextureRect)?.Texture?.ResourcePath,
                 TextureType = (n as TextureRect)?.Texture?.GetClass().ToString() });
-        System.IO.File.WriteAllText(System.IO.Path.Combine(System.IO.Path.GetDirectoryName(OS.GetExecutablePath())!, "../validation-1.3.1/banner-" + name + ".json"),
+        System.IO.File.WriteAllText(System.IO.Path.Combine(System.IO.Path.GetDirectoryName(OS.GetExecutablePath())!, "../validation-1.4.0/banner-" + name + ".json"),
             System.Text.Json.JsonSerializer.Serialize(banners));
         var diagnostics = Descendants<Node>(NRun.Instance!).Where(n => n.GetClass().ToString().StartsWith("Spine"))
             .Select(n => new { Path = n.GetPath().ToString(), Asset = n.GetClass() == "SpineSprite" ? (n.Get("skeleton_data_res").AsGodotObject() as Resource)?.ResourcePath : null,
                 Properties = n.GetPropertyList().Select(p => p["name"].AsString()).Where(p => p.Contains("material") || p.Contains("slot"))
                     .ToDictionary(p => p, p => n.Get(p).VariantType == Variant.Type.Object ? (n.Get(p).AsGodotObject() as Resource)?.ResourcePath : n.Get(p).ToString()) }).ToArray();
-        System.IO.File.WriteAllText(System.IO.Path.Combine(System.IO.Path.GetDirectoryName(OS.GetExecutablePath())!, "../validation-1.3.1/spine-" + name + ".json"),
+        System.IO.File.WriteAllText(System.IO.Path.Combine(System.IO.Path.GetDirectoryName(OS.GetExecutablePath())!, "../validation-1.4.0/spine-" + name + ".json"),
             System.Text.Json.JsonSerializer.Serialize(diagnostics));
         await Capture(name + "-source");
         InjectActivity();
@@ -169,6 +170,14 @@ public partial class LabOracle
         await Capture(name);
         Log.Info("[DemoLab] VISUAL PAIR: " + name);
         if (name is "event-dialogue" or "choose-card" or "select-upgrade") await AuditLocalHover(name, nativeState);
+        if (name == "choose-card") await Audit140AvatarExit();
+        if (name == "event-dialogue")
+        {
+            var cross = DemoVisualCodec.Decode((await CapturePublishedFrame()).Data);
+            if (!RewardDemoController.IsViewing || cross.Screen != nativeState.Screen || cross.Items.Any(v => v.Id.Contains("TogetherRewardDemo") || v.Id.Contains("FriendViewTopBar")))
+                throw new Exception("Cross-activity publication recursed or lost native screen");
+            Log.Info("[DemoLab] PASS 1.4.0: cross-activity publication sends underlying native screen while both peers observe.");
+        }
         RewardDemoController.Current.Exit();
     }
 

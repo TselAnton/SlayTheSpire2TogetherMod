@@ -16,7 +16,7 @@ public static class DemoScreenPolicy
     public static bool KnownActivity(string? screen) => screen is
         "NRewardsScreen" or "NCardRewardSelectionScreen" or "NMapScreen" or "NMapRoom"
         or "NEventRoom" or "NMerchantRoom" or "NMerchantInventory" or "NFakeMerchant" or "NFakeMerchantInventory"
-        or "NCrystalSphereScreen" or "NRestSiteRoom" or "NTreasureRoom" or "NTreasureRoomRelicCollection"
+        or "NCrystalSphereScreen" or "NRestSiteRoom"
         or "NChooseARelicSelection" or "NChooseACardSelectionScreen" or "NChooseABundleSelectionScreen"
         or "NDeckCardSelectScreen" or "NSimpleCardSelectScreen" or "NDeckUpgradeSelectScreen"
         or "NDeckTransformSelectScreen" or "NDeckEnchantSelectScreen" or "NCombatPileCardSelectScreen"

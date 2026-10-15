@@ -80,7 +80,10 @@ static class StartLab
     {
         try
         {
+            if (CommandLineHelper.GetValue("demo-startup") == "on")
+            { Log.Info("[DemoLab] STARTUP PASS: reached native main menu."); NGame.Instance!.GetTree().Quit(); return; }
             DemoSettings.SeparateButton = true; DemoSettings.AllActivities = true;
+            DemoSettings.AutoObserve = false; DemoSettings.AutoExitTurn = false; DemoSettings.AutoExitRoom = false;
             var game = NGame.Instance!;
             ProfileOracle.Run();
             await game.ToSignal(game.GetTree().CreateTimer(1), SceneTreeTimer.SignalName.Timeout);
@@ -93,6 +96,7 @@ static class StartLab
                 Player.CreateForNewRun<Ironclad>(UnlockState.all, 1),
                 Player.CreateForNewRun<Silent>(UnlockState.all, 2),
                 Player.CreateForNewRun<Regent>(UnlockState.all, 3),
+                Player.CreateForNewRun<Defect>(UnlockState.all, 4),
             };
             var run = RunState.CreateForNewRun(players, ActModel.GetDefaultList().Select(a => a.ToMutable()).ToList(), [], GameMode.Standard, 0, "DEMOLAB");
             players[1].Gold = 137; players[2].Gold = 42; // Distinct lab-only header values.
@@ -108,7 +112,7 @@ static class StartLab
             await RunManager.Instance.SetActInternal(0);
             await RunManager.Instance.EnterRoomDebug(RoomType.Monster, MapPointType.Unassigned, ModelDb.Encounter<ToadpolesWeak>().ToMutable());
             game.AddChild(new LabOracle { Players = players, Net = net });
-            Log.Info("[DemoLab] Combat created with three players (synthetic host transport).");
+            Log.Info("[DemoLab] Combat created with four players (synthetic host transport).");
         }
         catch (Exception e) { Log.Error($"[DemoLab] START FAILED: {e}"); }
     }
@@ -167,6 +171,7 @@ public partial class LabOracle : Node
     {
         await ToSignal(GetTree().CreateTimer(2), SceneTreeTimer.SignalName.Timeout);
         await AuditPatchCombat();
+        await Audit140Combat();
         await AuditPotionsAndRestore();
         await AuditCombatActivity();
         await FinishForRewards();
@@ -252,7 +257,7 @@ public partial class LabOracle : Node
             if (stable && beside) Log.Info("[DemoLab] PASS: combat eye beside player-list status, stable rectangular hitbox.");
             else Log.Error($"[DemoLab] FAIL: eye stable={stable} beside={beside}.");
             avatarEye.EmitSignal(BaseButton.SignalName.Pressed);
-            if (eyes == 2 && green && !DemoController.IsViewing)
+            if (eyes == Players.Length - 1 && green && !DemoController.IsViewing)
                 Log.Info("[DemoLab] PASS: combat has one eye per friend, one green; pressing green leaves demo.");
             else Log.Error($"[DemoLab] FAIL: combat eye count={eyes} green={green} active={DemoController.IsViewing}.");
             Log.Info($"[DemoLab] PASS: exit active={!DemoController.IsViewing}; native hand restored={NCombatRoom.Instance!.Ui.Hand.Visible}");
@@ -317,7 +322,7 @@ public partial class LabOracle : Node
             int buttons = Descendants<BaseButton>(view).Count(b => b.Visible);
             int avatars = Descendants<TextureButton>(RewardDemoController.Current).Count(b => b.Name.ToString().StartsWith("AvatarDemoEye_") && b.Visible);
             bool checkbox = Descendants<MegaCrit.Sts2.Core.Nodes.CommonUi.NTickbox>(view).Any(t => t.Name == "DemoViewUpgrades");
-            if (cards == 3 && labels == 0 && buttons == 0 && avatars == 2 && checkbox)
+            if (cards == 3 && labels == 0 && buttons == 0 && avatars == Players.Length - 1 && checkbox)
                 Log.Info("[DemoLab] PASS: reward demo contains three cards, native upgrade tickbox and grouped table eyes; no Skip or floating exit eye.");
             else Log.Error($"[DemoLab] FAIL: reward UI cards={cards} labels={labels} buttons={buttons} avatars={avatars}.");
             _cardChoiceVerified = true;
@@ -463,6 +468,7 @@ public partial class LabOracle : Node
     private async Task TestControllerCombat()
     {
         await AuditPatchCombat();
+        await Audit140Combat();
         await AuditPotionsAndRestore();
         await AuditCombatActivity();
         _before = Fingerprint();
@@ -684,7 +690,7 @@ public partial class LabOracle : Node
     {
         if (CommandLineHelper.GetValue("demo-stress") == "on") return; // Preserve the full-run visual evidence.
         await ToSignal(GetTree().CreateTimer(.5), SceneTreeTimer.SignalName.Timeout);
-        string directory = Path.Combine(Path.GetDirectoryName(OS.GetExecutablePath())!, "..", "validation-1.3.1");
+        string directory = Path.Combine(Path.GetDirectoryName(OS.GetExecutablePath())!, "..", "validation-1.4.0");
         Directory.CreateDirectory(directory);
         string path = Path.Combine(directory, $"lab-{name}.png");
         GetViewport().GetTexture().GetImage().SavePng(path);
@@ -869,18 +875,22 @@ public partial class LabOracle : Node
             await RunManager.Instance.EnterRoomDebug(RoomType.RestSite, showTransition: false);
             await AuditActivity("rest-site");
             await RunManager.Instance.EnterRoomDebug(RoomType.Treasure, showTransition: false);
-            await AuditActivity("treasure");
+            await Capture("treasure-disabled");
+            if (RewardDemoController.Current!.CanObserve(2)) throw new Exception("Treasure entry is observable");
             var treasureRoom = Descendants<NTreasureRoom>(NRun.Instance!).Single();
             HarmonyLib.AccessTools.Method(typeof(NTreasureRoom), "OnChestButtonReleased").Invoke(treasureRoom, [null]);
             await ToSignal(GetTree().CreateTimer(2), SceneTreeTimer.SignalName.Timeout);
-            await AuditActivity("treasure-open");
+            await Capture("treasure-open-disabled");
+            if (RewardDemoController.Current!.CanObserve(2)) throw new Exception("Open treasure is observable");
+            await RunManager.Instance.EnterRoomDebug(RoomType.Event, model: ModelDb.Event<MegaCrit.Sts2.Core.Models.Events.CrystalSphere>(), showTransition: false);
             var relics = ModelDb.AllRelics.Take(3).Select(r => r.ToMutable()).ToList();
             var choice = MegaCrit.Sts2.Core.Nodes.Screens.NChooseARelicSelection.ShowScreen(relics);
             await AuditActivity("choose-relic");
             if (choice != null) NOverlayStack.Instance!.Remove(choice);
             await RunManager.Instance.EnterRoomDebug(RoomType.Event, model: ModelDb.Event<MegaCrit.Sts2.Core.Models.Events.Neow>(), showTransition: false);
             await AuditActivity("ancient-event");
-            Log.Info("[DemoLab] 1.3.1 LAB FINISHED.");
+            await Audit140Enemies();
+            Log.Info("[DemoLab] 1.4.0 LAB FINISHED.");
         }
         catch (Exception e) { Log.Error("[DemoLab] ACTIVITIES FAILED: " + e); }
     }

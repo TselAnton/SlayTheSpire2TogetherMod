@@ -1,3 +1,13 @@
+# 1.4.0 (local candidate)
+
+- Native watched-player combat HUD, Osty for any character, Regent stars and Defect orbs.
+- Player-specific enemy intent/stolen-card visuals and target-aware card previews.
+- Independent pile/deck inspection, settings preservation, avatar exit through card selectors, map-vote visual restoration and watched relic tips.
+- Cross observation publishes underlying own state; treasure observation disabled; transition covers observer buttons.
+- Five localized settings, separate eyes enabled by default, automatic turn/room exit and next-player observation, optional independent hand interaction.
+- Correct merchant-hand parent exclusion; native power tooltips replace the invalid custom formatting path found in supplied logs.
+- Investigated early startup failures; root cause remains unproven. See docs/RELEASE_1.4.0.md for tested scope and limits.
+
 # Changelog
 
 ## 1.3.1 — 2026-10-14

@@ -13,7 +13,7 @@ namespace Sts2Demo;
 public static class ModEntry
 {
     public const string Id = "Sts2Demo";
-    public const string Version = "1.3.1";
+    public const string Version = "1.4.0";
     internal static bool Initialized { get; private set; }
     public static void Initialize()
     {
@@ -82,15 +82,5 @@ internal static class HideDuplicateRemoteCursor
         if ((DemoController.ObservedPlayerId ?? RewardDemoController.ObservedPlayerId) is not ulong target) return;
         foreach (var cursor in DemoUi.Descendants<NRemoteMouseCursor>(__instance))
             if (cursor.PlayerId == target) cursor.Visible = false;
-    }
-}
-
-[HarmonyPatch(typeof(NRemoteTargetingIndicator), nameof(NRemoteTargetingIndicator.StartDrawingFrom))]
-internal static class HideObservedRemoteLine
-{
-    static void Postfix(NRemoteTargetingIndicator __instance)
-    {
-        var player = (MegaCrit.Sts2.Core.Entities.Players.Player?)AccessTools.Field(typeof(NRemoteTargetingIndicator), "_player").GetValue(__instance);
-        if (player?.NetId == DemoController.ObservedPlayerId) __instance.Modulate = Colors.Transparent;
     }
 }

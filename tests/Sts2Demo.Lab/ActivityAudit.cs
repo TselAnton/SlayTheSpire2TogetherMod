@@ -151,7 +151,7 @@ public partial class LabOracle
             Frame(2, DemoRewardKind.Activity, screen);
             await ToSignal(GetTree().CreateTimer(.2), SceneTreeTimer.SignalName.Timeout);
             var eyes = Descendants<TextureButton>(controller).Where(e => e.Name.ToString().StartsWith("AvatarDemoEye_")).ToList();
-            if (eyes.Count != 2 || eyes.Any(e => !e.Visible) || Math.Abs(eyes[0].Position.X - eyes[1].Position.X) > .1f)
+            if (eyes.Count != Players.Length - 1 || eyes.Any(e => !e.Visible) || Math.Abs(eyes[0].Position.X - eyes[1].Position.X) > .1f)
                 throw new Exception("Buttons did not form one visible aligned column while peer 3 was late");
             controller.Toggle(3);
             await Capture("entry-buttons-loading");
@@ -173,7 +173,13 @@ public partial class LabOracle
             NMapScreen.Instance!.Open(isOpenedFromTopBar: true);
             await Capture("map-source");
             NMapScreen.Instance.Close();
+            var mapRun = RunManager.Instance.DebugOnlyGetState()!;
+            var synchronizer = RunManager.Instance.MapSelectionSynchronizer;
+            var vote = new MegaCrit.Sts2.Core.Multiplayer.Game.MapVote { coord = new MegaCrit.Sts2.Core.Map.MapCoord(0, 1), mapGenerationCount = synchronizer.MapGenerationCount };
+            synchronizer.PlayerVotedForMapCoord(Players[0], mapRun.MapLocation, vote);
             Frame(2, DemoRewardKind.Map, "NMapScreen"); controller.Enter(2);
+            if (synchronizer.GetVote(Players[0])?.coord != vote.coord || NMapScreen.Instance.PlayerVoteDictionary[Players[0]] != vote.coord)
+                throw new Exception("DEMO map reset local vote");
             await Capture("map");
             if (!NMapScreen.Instance.IsOpen || RewardDemoController.ObservedPlayerId != 2)
                 throw new Exception("Remote map did not open native local map");
@@ -184,11 +190,10 @@ public partial class LabOracle
             await ToSignal(GetTree().CreateTimer(.2), SceneTreeTimer.SignalName.Timeout);
             if (RewardDemoController.IsViewing || controller.CanObserve(2)) throw new Exception("Unknown screen remained observable");
             Log.Info("[DemoLab] PASS: local native map and unknown remote screen closes observation.");
-            DemoSettings.AllActivities = false;
+            DemoSettings.AllActivities = false; // Legacy key cannot restrict 1.4.0.
             Frame(2, DemoRewardKind.Activity, screen);
-            if (controller.Enter(2)) throw new Exception("Combat-only mode allowed an event");
-            await Capture("combat-only-event-unavailable");
-            Log.Info("[DemoLab] PASS: combat-only mode hides the whole event DEMO column.");
+            if (!controller.Enter(2)) throw new Exception("Removed battle-only setting still restricts activities");
+            Log.Info("[DemoLab] PASS: removed availability preference cannot restrict supported activities.");
         }
         catch (Exception e) { Log.Error("[DemoLab] AVAILABILITY/MAP FAILED: " + e); }
         finally { controller.Exit(); DemoSettings.AllActivities = true; DemoSettings.SeparateButton = true; NMapScreen.Instance?.Close(); }

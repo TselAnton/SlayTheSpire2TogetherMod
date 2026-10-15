@@ -33,7 +33,7 @@ if ($CandidateDll) {
 Copy-Item -LiteralPath $modDll, "$repoDir/src/Sts2Demo/Sts2Demo.json" -Destination "$labDir/mods/Sts2Demo"
 Get-FileHash -LiteralPath "$labDir/mods/Sts2Demo/Sts2Demo.dll" -Algorithm SHA256
 Copy-Item -LiteralPath "$repoDir/tests/Sts2Demo.Lab/.godot/mono/temp/bin/Release/Sts2DemoLab.dll", "$repoDir/tests/Sts2Demo.Lab/Sts2DemoLab.json" -Destination "$labDir/mods/Sts2DemoLab"
-$auditDir = Join-Path $repoDir 'artifacts/validation-1.3.1'
+$auditDir = Join-Path $repoDir 'artifacts/validation-1.4.0'
 New-Item -ItemType Directory -Path $auditDir -Force | Out-Null
 $logName = if ($StressOnly) { 'lab-stress.log' } else { 'lab-current.log' }
 $manifestName = if ($StressOnly) { 'stress-run.json' } else { 'run.json' }

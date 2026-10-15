@@ -19,6 +19,7 @@ public partial class DemoTopBar : Control
 {
     private readonly Dictionary<Control, Color> _hidden = [];
     private readonly List<(Control Source, Control Copy)> _copies = [];
+    private readonly Dictionary<Control, MouseFilterEnum> _mouseFilters = [];
     private ulong? _target;
     private int _oldZ;
     private Color _oldBarTint;
@@ -30,7 +31,10 @@ public partial class DemoTopBar : Control
     private string _relicsKey = "";
     public static DemoTopBar? Current { get; private set; }
     public static void BeginObservation()
-    { if (Current != null) Current._entryScreen = ActiveScreenContext.Instance.GetCurrentScreen(); }
+    { if (Current != null && (Current._target == null || !UtilityOpen && !RewardDemoController.OpenedObserverMap)) Current._entryScreen = ActiveScreenContext.Instance.GetCurrentScreen(); }
+    public static object? PublicationScreen => (UtilityOpen || RewardDemoController.OpenedObserverMap)
+        && Current?._entryScreen is Node entry && GodotObject.IsInstanceValid(entry) && entry.IsInsideTree()
+        ? entry : ActiveScreenContext.Instance.GetCurrentScreen();
     public static Player? ObservedPlayer => (DemoController.ObservedPlayerId ?? RewardDemoController.ObservedPlayerId) is ulong id
         ? RunManager.Instance.DebugOnlyGetState()?.GetPlayer(id) : null;
     public static bool UtilityOpen
@@ -39,8 +43,9 @@ public partial class DemoTopBar : Control
         {
             if (ObservedPlayer == null || Current == null) return false;
             var screen = ActiveScreenContext.Instance.GetCurrentScreen();
+            if (RewardDemoController.OpenedObserverMap && screen?.GetType().Name == "NMapScreen") return false;
             return screen != Current._entryScreen && screen?.GetType().Name is
-                "NMapScreen" or "NDeckViewScreen" or "NInspectCardScreen" or "NPauseMenu" or "NSettingsScreen" or "NCapstoneSubmenuStack";
+                "NCardPileScreen" or "NSimpleCardsViewScreen" or "NMapScreen" or "NDeckViewScreen" or "NInspectCardScreen" or "NPauseMenu" or "NSettingsScreen" or "NCapstoneSubmenuStack" or "NSettingsPanel";
         }
     }
     public override void _Ready()
@@ -63,11 +68,16 @@ public partial class DemoTopBar : Control
     }
     private void HideOriginal(Control source)
     {
-        _hidden.TryAdd(source, source.Modulate); source.Modulate = Colors.Transparent;
+        foreach (var holder in DemoUi.Descendants<NRelicInventoryHolder>(source)) MegaCrit.Sts2.Core.Nodes.HoverTips.NHoverTipSet.Remove(holder);
+        _hidden.TryAdd(source, source.Modulate); source.Modulate = new Color(source.Modulate, 0);
+        foreach (var control in DemoUi.Descendants<Control>(source).Prepend(source))
+        { _mouseFilters.TryAdd(control, control.MouseFilter); control.MouseFilter = MouseFilterEnum.Ignore; }
     }
     private void Restore()
     {
         foreach (var pair in _hidden) if (GodotObject.IsInstanceValid(pair.Key)) pair.Key.Modulate = pair.Value;
+        foreach (var pair in _mouseFilters) if (GodotObject.IsInstanceValid(pair.Key)) pair.Key.MouseFilter = pair.Value;
+        _mouseFilters.Clear();
         _hidden.Clear(); _copies.Clear(); _potions = null; _potionsKey = ""; _relics = null; _relicsKey = "";
         foreach (var child in GetChildren()) { RemoveChild(child); child.QueueFree(); }
         if (_target != null && NRun.Instance != null)
@@ -125,11 +135,12 @@ public partial class DemoTopBar : Control
             {
                 var holder = NRelicInventoryHolder.Create((RelicModel)relic.ClonePreservingMutability());
                 if (holder == null) continue;
-                _relics.AddChild(holder); DemoUi.ReadOnly(holder);
+                _relics.AddChild(holder);
             }
         }
         foreach (var pair in _copies)
         {
+            HideOriginal(pair.Source); // Native inventories may add children while we observe.
             pair.Copy.Position = GetGlobalTransformWithCanvas().AffineInverse() * pair.Source.GetGlobalTransformWithCanvas().Origin;
             pair.Copy.Size = pair.Source.Size;
             if (pair.Source == NRun.Instance.GlobalUi.TopBar.Gold)
