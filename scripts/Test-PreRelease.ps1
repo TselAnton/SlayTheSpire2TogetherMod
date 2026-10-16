@@ -1,13 +1,20 @@
-param([Parameter(Mandatory)][string]$GameDir, [string]$UmPath)
+param([Parameter(Mandatory)][string]$GameDir, [string]$UmPath, [string]$CandidateDll)
 $ErrorActionPreference = 'Stop'
 $repoDir = Split-Path -Parent $PSScriptRoot
 & dotnet run --project "$repoDir/tests/Sts2Demo.Tests/Sts2Demo.Tests.csproj" -c Release "-p:GameDir=$GameDir"
 if ($LASTEXITCODE -ne 0) { throw 'Observer/network tests failed.' }
 & dotnet run --project "$repoDir/tests/Sts2Demo.Bootstrap.Tests/Sts2Demo.Bootstrap.Tests.csproj" -c Release
 if ($LASTEXITCODE -ne 0) { throw 'Bootstrap/profile tests failed.' }
-& "$PSScriptRoot/Prepare-Workshop.ps1" -GameDir $GameDir
+if ($CandidateDll) {
+    # Freeze the exact binary used by the game tests; a rebuild can change Git metadata.
+    $candidate = (Resolve-Path -LiteralPath $CandidateDll).Path
+    $candidateHash = (Get-FileHash -LiteralPath $candidate -Algorithm SHA256).Hash
+    Copy-Item -LiteralPath $candidate -Destination "$repoDir/src/Sts2Demo/.godot/mono/temp/bin/Release/Sts2Demo.dll" -Force
+}
+& "$PSScriptRoot/Prepare-Workshop.ps1" -GameDir $GameDir -SkipBuild:([bool]$CandidateDll)
 $contentDir = (Resolve-Path -LiteralPath (Join-Path $repoDir 'workshop/FriendView/content')).Path
 $manifest = Get-Content -LiteralPath "$contentDir/Sts2Demo.json" -Raw -Encoding UTF8 | ConvertFrom-Json
+if ($CandidateDll -and (Get-FileHash -LiteralPath "$contentDir/Sts2Demo.dll" -Algorithm SHA256).Hash -ne $candidateHash) { throw 'Packaged DLL differs from the tested candidate.' }
 $assemblyVersion = [Reflection.AssemblyName]::GetAssemblyName("$contentDir/Sts2Demo.dll").Version
 $declaredVersion = [version]$manifest.version
 $entry = Get-Content -LiteralPath "$repoDir/src/Sts2Demo/ModEntry.cs" -Raw -Encoding UTF8

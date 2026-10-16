@@ -23,6 +23,9 @@ $docsDir = Join-Path $packageDir 'docs'
 New-Item -ItemType Directory -Force -Path $docsDir | Out-Null
 Copy-Item -LiteralPath "$repoDir/docs/COOP_TEST.md", "$repoDir/docs/WORKSHOP.md", "$repoDir/docs/PRE_RELEASE_TESTS.md", "$repoDir/docs/SUPPORTED_MODES.md", "$repoDir/docs/PLAN_1.4.0.md", "$repoDir/docs/RELEASE_1.4.0.md" -Destination $docsDir
 Copy-Item -LiteralPath "$repoDir/docs/STARTUP_CRASH_2026-10-16.md" -Destination $docsDir
+Copy-Item -LiteralPath "$repoDir/docs/SETTINGS.md" -Destination $docsDir
+New-Item -ItemType Directory -Force -Path "$docsDir/images" | Out-Null
+Copy-Item -LiteralPath "$repoDir/docs/images/settings" -Destination "$docsDir/images" -Recurse
 $manifest = Get-Content -Raw "$repoDir/src/Sts2Demo/Sts2Demo.json" | ConvertFrom-Json
 Add-Type -AssemblyName System.IO.Compression
 function Write-PortableModArchive([string]$Destination) {

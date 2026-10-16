@@ -46,6 +46,9 @@ public partial class LabOracle
         await Capture("settings-tooltip");
         toggles[0].EmitSignal(Control.SignalName.MouseExited);
         string language = MegaCrit.Sts2.Core.Localization.LocManager.Instance.Language;
+        bool[] originalTicks = toggles.Select(t => t.IsTicked).ToArray();
+        var originalSettings = (DemoSettings.SeparateButton, DemoSettings.AutoExitTurn,
+            DemoSettings.AutoObserve, DemoSettings.AutoExitRoom, DemoSettings.FollowCombat);
         try
         {
             MegaCrit.Sts2.Core.Localization.LocManager.Instance.SetLanguage("eng");
@@ -53,8 +56,25 @@ public partial class LabOracle
             toggles[1].EmitSignal(Control.SignalName.MouseEntered);
             await Capture("settings-english-tooltip");
             toggles[1].EmitSignal(Control.SignalName.MouseExited);
+            DemoSettings.SeparateButton = DemoSettings.AutoExitTurn = DemoSettings.AutoObserve =
+                DemoSettings.AutoExitRoom = DemoSettings.FollowCombat = true;
+            foreach (var toggle in toggles) toggle.IsTicked = true;
+            await Capture("workshop-settings-defaults");
+            string[] settingNames = ["button", "exit-turn", "auto-watch", "exit-room", "follow-cards"];
+            for (int i = 0; i < toggles.Count; i++)
+            {
+                toggles[i].EmitSignal(Control.SignalName.MouseEntered);
+                await Capture("workshop-setting-" + settingNames[i]);
+                toggles[i].EmitSignal(Control.SignalName.MouseExited);
+            }
         }
-        finally { MegaCrit.Sts2.Core.Localization.LocManager.Instance.SetLanguage(language); }
+        finally
+        {
+            (DemoSettings.SeparateButton, DemoSettings.AutoExitTurn, DemoSettings.AutoObserve,
+                DemoSettings.AutoExitRoom, DemoSettings.FollowCombat) = originalSettings;
+            for (int i = 0; i < toggles.Count; i++) toggles[i].IsTicked = originalTicks[i];
+            MegaCrit.Sts2.Core.Localization.LocManager.Instance.SetLanguage(language);
+        }
         foreach (var toggle in toggles) HarmonyLib.AccessTools.Method(typeof(NTickbox), "OnRelease").Invoke(toggle, null);
         Sts2Demo.Core.DemoSettings.Load();
         if (Sts2Demo.Core.DemoSettings.SeparateButton || !Sts2Demo.Core.DemoSettings.AllActivities)

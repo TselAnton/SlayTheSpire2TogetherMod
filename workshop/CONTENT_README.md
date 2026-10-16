@@ -22,6 +22,6 @@ The normal profile is used only when Friend View is the sole successfully loaded
 
 ## Validation and credits
 
-Local release candidate 1.4.0; not uploaded. Intermittent pre-logo startup failure has no proven root cause yet. The repository's docs/RELEASE_1.4.0.md records actual tests and remaining checks, including real Steam co-op and physical Steam Deck/controller validation.
+Release 1.4.0 fixes the intermittent pre-logo crash caused by native Sentry shutdown during a frame callback. Validation includes 158 protocol/state checks, 22 bootstrap checks, 125 in-game checks, 20 stress scene replacements and eight native startup runs. The repository's docs/RELEASE_1.4.0.md records the scope, including unverified real Steam co-op and physical Steam Deck/controller behavior. Settings and screenshots: https://github.com/TselAnton/SlayTheSpire2TogetherMod/blob/v1.4.0/docs/SETTINGS.md.
 
 Own code: MIT, Anton-PC; developed with OpenAI Codex. Analysis and packaging: Universal Modder and ILSpy; Harmony from the installation and Godot.NET.Sdk. Native loader reference: https://github.com/jiegec/STS2FirstMod. Game resources belong to Mega Crit and are resolved from the installation, never redistributed. No AI-generated in-game art/audio. The existing Workshop cover was generated separately with OpenAI imagegen.

@@ -3,6 +3,7 @@ import argparse
 import hashlib
 import html
 import json
+import re
 import shutil
 import zipfile
 from pathlib import Path
@@ -94,5 +95,13 @@ if args.archive:
             evidence.append(startup_manifest)
             evidence.extend(folder / result["log"] for result in json.loads(startup_manifest.read_text(encoding="utf-8-sig"))["results"])
         for path in evidence:
-            archive.write(path, path.name)
+            if path.suffix in {'.log', '.txt'}:
+                # Keep raw evidence locally; public logs omit machine/account identifiers.
+                raw = path.read_bytes()
+                contents = raw.decode('utf-16' if raw.startswith((b'\xff\xfe', b'\xfe\xff')) else 'utf-8-sig', errors='replace')
+                contents = re.sub(r'(?i)[A-Z]:[\\/]+Users[\\/]+[^\\/\s]+', '<USER_HOME>', contents)
+                contents = re.sub(r'\b7656119\d{10}\b', '<STEAM_ID>', contents)
+                archive.writestr(path.name, '[Public copy: machine home paths and Steam IDs redacted.]\n' + contents)
+            else:
+                archive.write(path, path.name)
 print(f"Gallery: {folder / 'index.html'}; {len(pairs)} pairs; {len(files)} screenshots")
