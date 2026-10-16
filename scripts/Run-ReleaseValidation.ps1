@@ -18,4 +18,4 @@ Write-Output 'FULL CANDIDATE PASS'
 Wait-LabResult 'lab-stress.log' '[DemoLab] STRESS FINISHED.' 8
 Write-Output 'STRESS CANDIDATE PASS'
 & "$PSScriptRoot/Run-Lab.ps1" -GameDir $GameDir -StopOnly
-& "$PSScriptRoot/Run-StartupAudit.ps1" -Runs 8
+& "$PSScriptRoot/Run-NativeStartupAudit.ps1" -Runs 8 -GameDir $GameDir

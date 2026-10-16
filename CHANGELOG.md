@@ -6,7 +6,7 @@
 - Cross observation publishes underlying own state; treasure observation disabled; transition covers observer buttons.
 - Five localized settings, separate eyes enabled by default, automatic turn/room exit and next-player observation, optional independent hand interaction.
 - Correct merchant-hand parent exclusion; native power tooltips replace the invalid custom formatting path found in supplied logs.
-- Investigated early startup failures; root cause remains unproven. See docs/RELEASE_1.4.0.md for tested scope and limits.
+- Fix the confirmed v0.107.1 native Sentry logger use-after-free on startup: defer native shutdown until the current process_frame signal finishes. Keep managed shutdown and modded reporting policy intact. See docs/STARTUP_CRASH_2026-10-16.md for matching crash dumps and A/B reproduction.
 
 # Changelog
 
