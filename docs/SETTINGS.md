@@ -42,4 +42,4 @@ On: see which cards your friend hovers over, selects and aims at a target. Off: 
 
 Everyone in the lobby needs the same game and Friend View version. Subscribe and enable the mod in the game's built-in mod menu; avoid installing a second manual copy. Tested with game v0.107.1. Treasure rooms and unsupported screens temporarily disable viewing. The map remains your shared map. The decorative merchant hand is hidden while watching.
 
-Own code: MIT. Developed with OpenAI Codex, using Universal Modder, ILSpy and Harmony. Game art belongs to Mega Crit; the mod loads it from your installation. Workshop cover made with OpenAI imagegen.
+Own code: MIT. Developed with OpenAI Codex, using Universal Modder, ILSpy and Harmony. Game art belongs to Mega Crit; the mod loads it from your installation. Workshop screenshots captured in game.
